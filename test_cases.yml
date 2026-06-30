@@ -1,0 +1,58 @@
+# 국내 주식 분석 엔진 회귀 테스트 케이스
+# 이 목록은 투자 추천이 아니라 자동 분석 엔진의 오류 검증용 샘플이다.
+
+domestic_stocks:
+  - name: 삼성전자
+    code: "005930"
+    market_expected: KOSPI
+    purpose: KOSPI 대형주 기본 데이터 안정성 및 분석 흐름 검증
+
+  - name: SK하이닉스
+    code: "000660"
+    market_expected: KOSPI
+    purpose: 반도체 강추세 종목의 과열, 눌림, 돌파 판단 검증
+
+  - name: 한미반도체
+    code: "042700"
+    market_expected: KOSPI
+    purpose: 고거래량 장대음봉, MACD 음수권 개선, 단기 재돌파선/목표가 역전, 낮은 손익비 경고 검증
+
+  - name: 현대차
+    code: "005380"
+    market_expected: KOSPI
+    purpose: 자동차 대형 경기민감주의 업종 분리 및 시장 상대강도 검증
+
+  - name: 삼성중공업
+    code: "010140"
+    market_expected: KOSPI
+    purpose: 조선/중공업 종목의 보조 소스 최신거래일 지연, 대표가격 선정, 낮은 손익비, 보유자 대응 분리 검증
+
+  - name: 두산에너빌리티
+    code: "034020"
+    market_expected: KOSPI
+    purpose: 원전/에너지 테마주의 뉴스성 변동성 및 방어선 판단 검증
+
+  - name: HD현대일렉트릭
+    code: "267260"
+    market_expected: KOSPI
+    purpose: 전력기기 대표주의 강추세, 고가주, 섹터 대표 흐름 검증
+
+  - name: 제룡전기
+    code: "033100"
+    market_expected: KOSDAQ
+    purpose: KOSDAQ 변압기 고변동주의 눌림목 지지가 위·일봉 돌파 확인가 아래 구조, 회복 확인가 산정, 단기 재돌파선/1차 목표 중복 제거 검증
+
+  - name: 알테오젠
+    code: "196170"
+    market_expected: KOSDAQ
+    purpose: 바이오 고변동주의 급등락, 과열, 수급 실패 처리, 손절 기준 검증
+
+  - name: 경동제약
+    code: "011040"
+    market_expected: KOSDAQ
+    purpose: 현재가가 매수 관심가 아래인 약반등/저유동 제약주의 전략 라벨, 지표 라벨, 방어선 근접 리스크 검증
+
+  - name: 에코프로비엠
+    code: "247540"
+    market_expected: KOSDAQ
+    purpose: 2차전지 고변동주의 매물대, 추세 훼손, 테마주 변동성 검증

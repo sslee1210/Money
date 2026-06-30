@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+
+reports/
+test_outputs/
+
+.env
+.venv/
+venv/
+env/
+
+.DS_Store
+Thumbs.db
