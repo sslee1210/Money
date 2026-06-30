@@ -253,7 +253,13 @@ def analyze_command_chart(
     out_dir = REPORTS_DIR / f"{safe_name}_{code}"
     out_dir.mkdir(parents=True, exist_ok=True)
     current_price = safe_round(quote.price) or 0
-    quote_errors, quote_warnings = _validate_quote(quote, daily_data.public_reference_close, current_price)
+    quote_errors, quote_warnings = _validate_quote(
+        quote,
+        daily_data.public_reference_close,
+        current_price,
+        is_intraday=session_intraday,
+        now=now,
+    )
     invalid_reasons.extend(quote_errors)
     if quote_warnings:
         daily_data = replace(daily_data, validation_note=f"{daily_data.validation_note}; {'; '.join(quote_warnings)}")
@@ -487,13 +493,28 @@ def _standardize_daily_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return out[["DateTime", "Open", "High", "Low", "Close", "Volume", "TradeValue"]]
 
 
-def _validate_quote(quote: Any, public_reference_close: float | None, current_price: int) -> tuple[list[str], list[str]]:
+def _validate_quote(
+    quote: Any,
+    public_reference_close: float | None,
+    current_price: int,
+    *,
+    is_intraday: bool,
+    now: datetime | None = None,
+) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     if current_price <= 0:
         errors.append("키움 현재가가 0 이하입니다")
     if quote.timestamp is None:
         errors.append("키움 현재가 timestamp가 없어 데이터 신뢰도를 확인할 수 없습니다")
+    elif is_intraday:
+        quote_time = _as_kst(quote.timestamp)
+        current_time = (_as_kst(now) if now else datetime.now(KST))
+        age = current_time - quote_time
+        if age.total_seconds() < -300:
+            errors.append("키움 현재가 timestamp가 현재 시각보다 미래입니다")
+        elif age > timedelta(minutes=30):
+            errors.append("키움 현재가 timestamp가 장중 기준 30분을 초과해 지연되었습니다")
 
     prev_close = finite(getattr(quote, "prev_close", None))
     if prev_close is not None and public_reference_close is not None:
@@ -511,6 +532,12 @@ def _validate_quote(quote: Any, public_reference_close: float | None, current_pr
         elif current_price and not (low <= current_price <= high):
             errors.append("키움 현재가가 장중 고가/저가 범위 밖입니다")
     return errors, warnings
+
+
+def _as_kst(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=KST)
+    return value.astimezone(KST)
 
 
 def _cloud_low(row: pd.Series) -> float | None:

@@ -539,8 +539,12 @@ def validate_pro_trader_layer(text: str) -> list[str]:
             failures.append(f"프로 판단 레이어 필수 섹션이 없습니다: {heading}")
 
     common_confirmation = "회복/돌파 공통 확인가" in text
-    for label in ["회복 확인가", "눌림목 지지가", "단기 재돌파선", "일봉 돌파 확인가", "장중 방어선", "스윙 손절선"]:
+    required_price_labels = ["회복 확인가", "눌림목 지지가", "단기 재돌파선", "일봉 돌파 확인가", "장중 방어선", "스윙 손절선"]
+    rebreak_aliases = ["단기 재돌파선", "장중 현재가 유지 기준", "강한 저항/목표권 확인선", "강한 저항/2차 목표 전 확인선"]
+    for label in required_price_labels:
         if label in {"회복 확인가", "일봉 돌파 확인가"} and common_confirmation:
+            continue
+        if label == "단기 재돌파선" and any(alias in text for alias in rebreak_aliases):
             continue
         if label not in text:
             failures.append(f"가격 명칭 분리 필수 항목이 없습니다: {label}")

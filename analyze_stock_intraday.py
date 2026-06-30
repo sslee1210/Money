@@ -969,6 +969,8 @@ def make_report(
     holder_text = state_actions["holder_action"]
     additional_buyer_text = state_actions["add_buyer_action"]
     stop_loss_action_text = state_actions["stop_loss_action"]
+    if volume_momentum_conflict["applies"] and volume_momentum_conflict["primary_strategy"] not in primary_strategy:
+        primary_strategy = f"{primary_strategy}; {volume_momentum_conflict['primary_strategy']}"
     deep_pullback_note = (
         pullback_status_text
         if "깊은 눌림목 구간 안" in pullback_status_text
@@ -1627,7 +1629,7 @@ def make_report(
         f"{overheat_breakout_state['template']} {rr_caution_text}"
         if overheat_breakout_state["applies"]
         else (
-            f"{volume_momentum_conflict['template']} {rr_caution_text} 가격/거래량 신뢰도는 {reliability_parts['가격 신뢰도']}/{reliability_parts['거래량 신뢰도']}, "
+            f"{volume_momentum_conflict['state']}. {volume_momentum_conflict['template']} {volume_momentum_conflict['final']}. {rr_caution_text} 가격/거래량 신뢰도는 {reliability_parts['가격 신뢰도']}/{reliability_parts['거래량 신뢰도']}, "
             f"수급 신뢰도는 {reliability_parts['수급 신뢰도']}, 해석 완전성은 {reliability_parts['해석 완전성']}입니다."
             if volume_momentum_conflict["applies"]
             else (

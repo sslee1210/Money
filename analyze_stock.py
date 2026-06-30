@@ -442,7 +442,7 @@ def strategy_labels_by_price(
     if data_reliability == "낮음":
         return {"primary_strategy": "데이터 확인 대기", "final": "데이터 부족으로 분석 제한"}
     if current < intraday_defense:
-        return {"primary_strategy": "신규매수 금지, 장중 방어 우선", "final": "방어 확인 전 매수 금지"}
+        return {"primary_strategy": "신규매수 금지, 장중 방어 우선", "final": "방어 확인 전 신규매수 금지"}
     if intraday_defense <= current < low:
         return {"primary_strategy": "회복 확인 대기", "final": "회복 확인가 도달 전 신규매수 금지"}
     if low <= current <= high:
@@ -1174,7 +1174,7 @@ FINAL_ACTION_TEMPLATES = {
         "new": "신규매수자는 목표 부근 추격을 피하고 눌림을 기다립니다.",
     },
     "DEFENSE_REQUIRED": {
-        "final": "방어 확인 전 매수 금지",
+        "final": "방어 확인 전 신규매수 금지",
         "primary": "신규매수 금지, 방어 우선",
         "reason": "현재가가 방어선 이하라 신규매수보다 손절/비중 축소 판단이 우선입니다.",
         "new": "신규매수자는 방어선 회복 전까지 진입하지 않습니다.",
@@ -5085,6 +5085,26 @@ def build_report(
         )
         else ""
     )
+    volume_momentum_conflict = assess_volume_momentum_conflict(
+        close,
+        pull_high_value,
+        _finite_or_none(decision.get("회복확인선")) or _finite_or_none(decision.get("돌파가격")),
+        decision.get("거래량비율"),
+        rsi_value,
+        macd_value,
+        macd_signal,
+    )
+    volume_momentum_note = ""
+    if volume_momentum_conflict["applies"]:
+        volume_momentum_note = (
+            f"{volume_momentum_conflict['state']}. "
+            f"{volume_momentum_conflict['template']} "
+            f"{volume_momentum_conflict['final']}."
+        )
+        if volume_momentum_conflict["primary_strategy"] and volume_momentum_conflict["primary_strategy"] not in str(decision.get("주전략", "")):
+            decision["주전략"] = f"{decision.get('주전략', '')}; {volume_momentum_conflict['primary_strategy']}".strip("; ")
+        if volume_momentum_conflict["final"] and volume_momentum_conflict["final"] not in str(decision.get("최종판단", "")):
+            decision["최종판단"] = f"{decision.get('최종판단', '')}·{volume_momentum_conflict['final']}".strip("·")
     state_locked = bool(decision.get("상태코드잠금"))
     if not state_locked:
         if np.isfinite(confirm_rr) and confirm_rr < 0.5:
@@ -5365,7 +5385,7 @@ def build_report(
 
 ## 12. 최종 한 문단 판단
 
-{stock_name} {code}은 기준가 {money(close)}에서 바로 추격 매수하기보다 {pull_confirm_text} 또는 {breakout} 돌파를 기다리는 전략이 유리합니다. 근접 저항/보유자 일부 익절 후보는 {money(holder_candidate)}이고, 신규매수 기준 1차 목표는 {money(target1)}으로 예상 수익률 {fpct(decision['예상수익률1'])}, 신규매수 기준 2차 목표는 {money(target2)}으로 {fpct(decision['예상수익률2'])}이며, 스윙 최종 방어선은 {money(defense)}입니다. 가장 중요한 가격은 {breakout}이며, 이 가격을 거래량으로 돌파하지 못하면 단기 매물 소화 구간으로 봅니다.
+{stock_name} {code}은 기준가 {money(close)}에서 바로 추격 매수하기보다 {pull_confirm_text} 또는 {breakout} 돌파를 기다리는 전략이 유리합니다. {volume_momentum_note} 근접 저항/보유자 일부 익절 후보는 {money(holder_candidate)}이고, 신규매수 기준 1차 목표는 {money(target1)}으로 예상 수익률 {fpct(decision['예상수익률1'])}, 신규매수 기준 2차 목표는 {money(target2)}으로 {fpct(decision['예상수익률2'])}이며, 스윙 최종 방어선은 {money(defense)}입니다. 가장 중요한 가격은 {breakout}이며, 이 가격을 거래량으로 돌파하지 못하면 단기 매물 소화 구간으로 봅니다.
 
 ## 부록. 차트
 
@@ -5480,7 +5500,7 @@ def build_report(
 
 ## 6. 최종 한 문단
 
-{stock_name} {code}은 현재 {money(close)} 기준으로 {deep_pullback_note} {buy_context_text} {rebreak_context_text} {breakout_context_text} {target_context_text} 1차 목표는 {money(target1)}, 2차 목표는 {money(target2)}이고, {money(defense)} 이탈 시 매수 관점은 낮춥니다. {rr_caution_text} 가격/거래량 신뢰도는 {reliability_parts['가격 신뢰도']}/{reliability_parts['거래량 신뢰도']}, 수급 신뢰도는 {reliability_parts['수급 신뢰도']}, 해석 완전성은 {reliability_parts['해석 완전성']}입니다."""
+{stock_name} {code}은 현재 {money(close)} 기준으로 {deep_pullback_note} {volume_momentum_note} {buy_context_text} {rebreak_context_text} {breakout_context_text} {target_context_text} 1차 목표는 {money(target1)}, 2차 목표는 {money(target2)}이고, {money(defense)} 이탈 시 매수 관점은 낮춥니다. {rr_caution_text} 가격/거래량 신뢰도는 {reliability_parts['가격 신뢰도']}/{reliability_parts['거래량 신뢰도']}, 수급 신뢰도는 {reliability_parts['수급 신뢰도']}, 해석 완전성은 {reliability_parts['해석 완전성']}입니다."""
     return report
 
 

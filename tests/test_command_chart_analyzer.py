@@ -158,6 +158,8 @@ def test_intraday_breakout_never_uses_confirmed_word():
     assert decision.verdict == "조건부로 사라"
     assert "확정" not in rendered
     assert "3분봉 또는 5분봉 종가" in rendered
+    assert "장중 돌파 시도" in rendered
+    assert "오늘 종가 확인 필요" in rendered
 
 
 def test_no_chase_line_blocks_buy_even_with_good_rr():
@@ -171,6 +173,47 @@ def test_no_chase_line_blocks_buy_even_with_good_rr():
     decision = evaluate_decision(DecisionContext(current_price=53500, levels=levels, is_intraday=True, risk_reward=2.0))
     assert decision.verdict == "사지 마라"
     assert "추격 금지선 이상" in decision.headline
+
+
+def test_intraday_stale_quote_timestamp_stops_analysis():
+    quote = Quote(
+        code="005930",
+        name="삼성전자",
+        price=54500,
+        prev_close=54300,
+        high=55000,
+        low=54000,
+        timestamp=datetime(2026, 6, 30, 9, 0),
+    )
+    errors, warnings = command_chart_analyzer._validate_quote(
+        quote,
+        public_reference_close=54300,
+        current_price=54500,
+        is_intraday=True,
+        now=datetime(2026, 6, 30, 10, 0),
+    )
+    assert not warnings
+    assert any("30분" in error for error in errors)
+
+
+def test_quote_price_outside_intraday_range_stops_analysis():
+    quote = Quote(
+        code="005930",
+        name="삼성전자",
+        price=56000,
+        prev_close=54300,
+        high=55000,
+        low=54000,
+        timestamp=datetime(2026, 6, 30, 10, 0),
+    )
+    errors, _warnings = command_chart_analyzer._validate_quote(
+        quote,
+        public_reference_close=54300,
+        current_price=56000,
+        is_intraday=True,
+        now=datetime(2026, 6, 30, 10, 1),
+    )
+    assert any("범위 밖" in error for error in errors)
 
 
 def test_price_without_evidence_stops_analysis():
@@ -201,3 +244,35 @@ def test_collect_daily_data_prefers_validated_kiwoom_daily(monkeypatch):
     daily = command_chart_analyzer.collect_daily_data("005930", "삼성전자", KiwoomDailyProvider())
     assert daily.frame.iloc[-1]["Close"] == kiwoom.iloc[-1]["Close"]
     assert not daily.stop_precision
+
+
+def test_collect_daily_data_excludes_intraday_incomplete_daily_candle(monkeypatch):
+    public = _daily_frame()
+    kiwoom = pd.concat(
+        [
+            public,
+            pd.DataFrame(
+                {
+                    "DateTime": [pd.Timestamp("2026-06-30")],
+                    "Open": [90000.0],
+                    "High": [91000.0],
+                    "Low": [89000.0],
+                    "Close": [90500.0],
+                    "Volume": [999999.0],
+                    "TradeValue": [90499909500.0],
+                }
+            ).set_index("DateTime", drop=False),
+        ]
+    )
+
+    class KiwoomDailyProvider(MockProvider):
+        def get_daily_ohlcv(self, code: str, limit: int = 400) -> pd.DataFrame:
+            return kiwoom
+
+    monkeypatch.setattr(command_chart_analyzer, "today_kst", lambda: datetime(2026, 6, 30, 10, 0))
+    monkeypatch.setattr(command_chart_analyzer, "detect_name_market", lambda code, name, end: ("삼성전자", "KOSPI", ".KS"))
+    monkeypatch.setattr(command_chart_analyzer, "load_pykrx", lambda code, start, end: command_chart_analyzer.SourceFrame("pykrx", public))
+    monkeypatch.setattr(command_chart_analyzer, "load_fdr", lambda code, start, end: command_chart_analyzer.SourceFrame("FinanceDataReader", public))
+    monkeypatch.setattr(command_chart_analyzer, "load_yfinance", lambda ticker, start, end, name="yfinance": command_chart_analyzer.SourceFrame(name, public))
+    daily = command_chart_analyzer.collect_daily_data("005930", "삼성전자", KiwoomDailyProvider())
+    assert pd.Timestamp("2026-06-30") not in set(pd.to_datetime(daily.frame["DateTime"]))

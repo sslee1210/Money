@@ -117,10 +117,10 @@ def evaluate_decision(ctx: DecisionContext) -> DecisionResult:
     elif levels.breakout and current >= levels.breakout.price:
         if ctx.is_intraday:
             verdict = "조건부로 사라"
-            headline = "장중 돌파 시도: 분봉 종가 유지가 필요"
+            headline = "장중 돌파 시도: 3분봉 또는 5분봉 종가 유지 필요, 오늘 종가 확인 필요"
             actions = (
                 "지금 바로 시장가로 사지 마라.",
-                f"{format_price(levels.breakout.price)} 이상을 거래량 동반해 3분봉 또는 5분봉 종가로 유지할 때만 1차 매수하라.",
+                f"{format_price(levels.breakout.price)} 이상을 거래량 동반해 3분봉 또는 5분봉 종가로 유지할 때만 1차 매수하라. 오늘 종가 확인 필요.",
             )
             final_state = "WATCH_INTRADAY_BREAKOUT"
         else:

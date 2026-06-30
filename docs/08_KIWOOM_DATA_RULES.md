@@ -10,10 +10,17 @@
 
 로컬 키움 브릿지 URL은 `KIWOOM_BRIDGE_URL`로 설정한다.
 
+cmd 예시:
+
+```bat
+set KIWOOM_BRIDGE_URL=http://127.0.0.1:8765
+python command_chart_analyzer.py 005930 삼성전자
+```
+
 PowerShell 예시:
 
 ```powershell
-$env:KIWOOM_BRIDGE_URL = "http://127.0.0.1:8000"
+$env:KIWOOM_BRIDGE_URL="http://127.0.0.1:8765"
 python command_chart_analyzer.py 005930 삼성전자
 ```
 
@@ -42,14 +49,14 @@ code=종목코드
 {
   "code": "005930",
   "name": "삼성전자",
-  "price": 70000,
-  "prev_close": 69500,
-  "open": 69800,
-  "high": 70400,
-  "low": 69200,
-  "volume": 1234567,
-  "trade_value": 86419690000,
-  "timestamp": "2026-06-30T10:15:00+09:00"
+  "price": 78500,
+  "prev_close": 78000,
+  "open": 78200,
+  "high": 79000,
+  "low": 77800,
+  "volume": 12345678,
+  "trade_value": 968000000000,
+  "timestamp": "2026-06-30T14:30:00+09:00"
 }
 ```
 
@@ -63,7 +70,13 @@ code=종목코드
 - `거래량` -> `volume`
 - `거래대금` -> `trade_value`
 
-`price`가 0 이하이거나 `timestamp`가 없으면 분석 중단이다.
+`price`가 없거나 0 이하이면 분석 중단이다.
+
+`timestamp`가 없거나 파싱할 수 없으면 분석 중단이다.
+
+장중에는 `timestamp`가 현재 시각보다 30분을 초과해 오래되면 분석 중단이다.
+
+장마감 이후에는 timestamp 최신성 검증을 완화하되, 가격 비교 검증은 유지한다.
 
 `prev_close`가 있으면 pykrx/FDR 최신 완료 종가와 비교한다.
 
@@ -162,6 +175,10 @@ Schema:
 ```
 
 키움 일봉은 대표 일봉 후보로 사용할 수 있지만 단독 사용은 금지한다.
+
+장중 `/candles/daily`에 오늘 미완성 일봉이 포함될 수 있으므로 `latest_completed_candidate()` 기준의 완료 일봉만 대표 후보로 사용한다.
+
+오늘 미완성 일봉은 pykrx/FDR 전일 확정 일봉과 직접 비교하지 않는다.
 
 pykrx/FDR 최신 완료 일봉과 교차검증한다.
 
