@@ -127,13 +127,7 @@ class TestResult:
 
 
 def load_test_cases(path: Path) -> list[TestCase]:
-    text = path.read_text(encoding="utf-8")
-    try:
-        import yaml  # type: ignore
-
-        raw = yaml.safe_load(text)
-    except Exception:
-        raw = _minimal_yaml_load(text)
+    raw = load_case_document(path)
     items = raw.get("domestic_stocks", []) if isinstance(raw, dict) else []
     cases: list[TestCase] = []
     for item in items:
@@ -150,25 +144,44 @@ def load_test_cases(path: Path) -> list[TestCase]:
     return cases
 
 
+def load_command_static_cases(path: Path) -> list[dict[str, str]]:
+    raw = load_case_document(path)
+    items = raw.get("command_chart_analyzer_static", []) if isinstance(raw, dict) else []
+    return [dict(item) for item in items if isinstance(item, dict)]
+
+
+def load_case_document(path: Path) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    try:
+        import yaml  # type: ignore
+
+        raw = yaml.safe_load(text)
+    except Exception:
+        raw = _minimal_yaml_load(text)
+    return raw if isinstance(raw, dict) else {}
+
+
 def _minimal_yaml_load(text: str) -> dict[str, Any]:
-    items: list[dict[str, str]] = []
+    sections: dict[str, list[dict[str, str]]] = {"domestic_stocks": [], "command_chart_analyzer_static": []}
     current: dict[str, str] | None = None
-    in_domestic = False
+    current_section: str | None = None
     for raw in text.splitlines():
         line = raw.rstrip()
         if not line or line.lstrip().startswith("#"):
             continue
-        if line.startswith("domestic_stocks:"):
-            in_domestic = True
-            continue
-        if in_domestic and not line.startswith((" ", "-")) and line.strip().endswith(":"):
-            break
-        if not in_domestic:
-            continue
         stripped = line.strip()
+        if not line.startswith((" ", "-")) and stripped.endswith(":"):
+            if current_section and current:
+                sections[current_section].append(current)
+            current = None
+            section = stripped[:-1]
+            current_section = section if section in sections else None
+            continue
+        if current_section is None:
+            continue
         if stripped.startswith("- "):
             if current:
-                items.append(current)
+                sections[current_section].append(current)
             current = {}
             stripped = stripped[2:].strip()
             if stripped and ":" in stripped:
@@ -178,8 +191,8 @@ def _minimal_yaml_load(text: str) -> dict[str, Any]:
             k, v = stripped.split(":", 1)
             current[k.strip()] = v.strip().strip('"')
     if current:
-        items.append(current)
-    return {"domestic_stocks": items}
+        sections[current_section or "domestic_stocks"].append(current)
+    return sections
 
 
 def run_one(case: TestCase, script_name: str, timeout: int) -> TestResult:
@@ -1482,6 +1495,22 @@ def run_static_fixture_checks() -> list[str]:
     return failures
 
 
+def run_command_chart_static_checks(static_cases: list[dict[str, str]]) -> list[str]:
+    if not static_cases:
+        return ["test_cases.yml의 command_chart_analyzer_static 섹션이 비어 있습니다"]
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/test_command_chart_analyzer.py", "-q"],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        output = (proc.stdout + "\n" + proc.stderr).strip()
+        return [f"command_chart_analyzer_static pytest 실패: {output}"]
+    return []
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="국내 주식 분석 엔진 회귀 테스트")
     parser.add_argument("--cases", default="test_cases.yml", help="테스트 케이스 YAML/JSON 파일")
@@ -1491,28 +1520,38 @@ def main() -> int:
     parser.add_argument("--fixtures-only", action="store_true", help="네트워크 분석 없이 고정 fixture 정적 검증만 실행")
     args = parser.parse_args()
 
-    cases = load_test_cases(ROOT / args.cases)
+    cases_path = ROOT / args.cases
+    cases = load_test_cases(cases_path)
+    command_static_cases = load_command_static_cases(cases_path)
     if args.fixtures_only:
         fixture_failures = run_static_fixture_checks()
-        if fixture_failures:
+        command_failures = run_command_chart_static_checks(command_static_cases)
+        if fixture_failures or command_failures:
             print("[fixture 검증] FAIL")
-            for failure in fixture_failures:
+            for failure in fixture_failures + command_failures:
                 print(f"- {failure}")
             return 1
         print("[fixture 검증] PASS")
+        print(f"[command_chart_analyzer_static] PASS ({len(command_static_cases)} cases)")
         return 0
 
     if args.dry_run:
         print("[회귀 테스트 대상]")
         for c in cases:
             print(f"- {c.name} {c.code} ({c.market_expected}) : {c.purpose}")
+        if command_static_cases:
+            print("\n[명령형 분석 정적 테스트 대상]")
+            for item in command_static_cases:
+                print(f"- {item.get('name', '')} : {item.get('purpose', '')}")
         fixture_failures = run_static_fixture_checks()
-        if fixture_failures:
+        command_failures = run_command_chart_static_checks(command_static_cases)
+        if fixture_failures or command_failures:
             print("\n[정적 fixture 검증] FAIL")
-            for failure in fixture_failures:
+            for failure in fixture_failures + command_failures:
                 print(f"- {failure}")
             return 1
         print("\n[정적 fixture 검증] PASS")
+        print(f"[command_chart_analyzer_static] PASS ({len(command_static_cases)} cases)")
         return 0
 
     results: list[TestResult] = []
@@ -1529,6 +1568,8 @@ def main() -> int:
         if not result.passed:
             for failure in result.failures:
                 print(f"   - {failure}")
+    fixture_failures = run_static_fixture_checks()
+    command_failures = run_command_chart_static_checks(command_static_cases)
     summary = write_summary(results)
     total = len(results)
     passed = sum(1 for r in results if r.passed)
@@ -1568,6 +1609,10 @@ def main() -> int:
     print("\n[회귀 테스트 완료]")
     print(f"총 테스트 종목: {total}")
     print(f"정상 통과: {passed}")
+    print(f"정적 fixture 검증: {'PASS' if not fixture_failures else 'FAIL'}")
+    print(f"command_chart_analyzer_static: {'PASS' if not command_failures else 'FAIL'} ({len(command_static_cases)} cases)")
+    for failure in fixture_failures + command_failures:
+        print(f"- {failure}")
     for key in [
         "QA 실패",
         "계산 오류",
@@ -1599,9 +1644,10 @@ def main() -> int:
         "지지/저항 중복 출력 오류",
     ]:
         print(f"{key}: {category_totals[key]}")
-    print(f"\n최종 판정: {'국내 주식 분석 엔진 사용 가능' if passed == total else '수정 필요'}")
+    all_passed = passed == total and not fixture_failures and not command_failures
+    print(f"\n최종 판정: {'국내 주식 분석 엔진 사용 가능' if all_passed else '수정 필요'}")
     print(f"결과 파일: {summary}")
-    return 0 if passed == total else 1
+    return 0 if all_passed else 1
 
 
 if __name__ == "__main__":

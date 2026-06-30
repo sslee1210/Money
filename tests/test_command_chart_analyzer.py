@@ -7,7 +7,7 @@ import pandas as pd
 
 import command_chart_analyzer
 from core.decision_engine import DecisionContext, DecisionLevels, PriceEvidence, evaluate_decision
-from core.indicators import calculate_standard_indicators, indicators_valid
+from core.indicators import calculate_standard_indicators, indicators_valid, intraday_indicators_valid
 from kiwoom.candles import ticks_to_ohlcv
 from kiwoom.models import Quote, Tick
 from kiwoom.provider import KiwoomDataError, KiwoomDataProvider
@@ -52,7 +52,17 @@ class MockProvider(KiwoomDataProvider):
     def get_quote(self, code: str) -> Quote:
         if self.fail:
             raise KiwoomDataError("mock quote failure")
-        return Quote(code=code, name="삼성전자", price=54500, volume=123456, trade_value=6700000000)
+        return Quote(
+            code=code,
+            name="삼성전자",
+            price=54500,
+            prev_close=54300,
+            high=55000,
+            low=54000,
+            volume=123456,
+            trade_value=6700000000,
+            timestamp=datetime(2026, 6, 30, 10, 0),
+        )
 
     def get_intraday_ohlcv(self, code: str, interval_minutes: int = 1, limit: int = 600) -> pd.DataFrame:
         if self.fail:
@@ -62,6 +72,24 @@ class MockProvider(KiwoomDataProvider):
             frame = frame.resample("5min").agg({"DateTime": "first", "Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum", "TradeValue": "sum"}).dropna()
             frame["DateTime"] = frame.index
         return frame
+
+    def get_daily_ohlcv(self, code: str, limit: int = 400) -> pd.DataFrame:
+        if self.fail:
+            raise KiwoomDataError("mock daily failure")
+        return _daily_frame(limit)
+
+
+class BadQuoteProvider(MockProvider):
+    def get_quote(self, code: str) -> Quote:
+        return Quote(
+            code=code,
+            name="삼성전자",
+            price=54500,
+            prev_close=58000,
+            high=55000,
+            low=54000,
+            timestamp=datetime(2026, 6, 30, 10, 0),
+        )
 
 
 def test_command_chart_analyzer_imports():
@@ -84,6 +112,12 @@ def test_indicator_calculation_has_required_values():
     assert "Ichimoku Base" in ind.columns
 
 
+def test_intraday_indicator_validation_does_not_require_long_daily_windows():
+    ind = calculate_standard_indicators(_minute_frame(80))
+    assert intraday_indicators_valid(ind)
+    assert pd.isna(ind.iloc[-1].get("MA120"))
+
+
 def test_kiwoom_provider_mock_returns_quote_and_minutes():
     provider = MockProvider()
     quote = provider.get_quote("005930")
@@ -94,13 +128,21 @@ def test_kiwoom_provider_mock_returns_quote_and_minutes():
 
 def test_invalid_data_writes_only_qa_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
-    monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False))
+    monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
     output = command_chart_analyzer.analyze_command_chart("005930", "삼성전자", provider=MockProvider(fail=True))
     out_dir = tmp_path / "삼성전자_005930"
     assert "분석 중단" in output
     assert (out_dir / "삼성전자_005930_보고서_QA실패.md").exists()
     assert not (out_dir / "삼성전자_005930_조건부명령형_차트분석.md").exists()
     assert not (out_dir / "삼성전자_005930_조건부명령형_차트분석.html").exists()
+
+
+def test_quote_prev_close_mismatch_stops_normal_report(tmp_path, monkeypatch):
+    monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
+    output = command_chart_analyzer.analyze_command_chart("005930", "삼성전자", provider=BadQuoteProvider())
+    assert "분석 중단" in output
+    assert (tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md").exists()
 
 
 def test_intraday_breakout_never_uses_confirmed_word():
@@ -118,6 +160,19 @@ def test_intraday_breakout_never_uses_confirmed_word():
     assert "3분봉 또는 5분봉 종가" in rendered
 
 
+def test_no_chase_line_blocks_buy_even_with_good_rr():
+    levels = DecisionLevels(
+        support=PriceEvidence("핵심 지지선", 49000, ("20일선",)),
+        confirmation=PriceEvidence("매수 확인선", 49300, ("3분봉 20이평선",)),
+        breakout=PriceEvidence("돌파선", 52000, ("최근 20일 고점",)),
+        stop=PriceEvidence("손절/방어선", 48500, ("최근 20일 저점",)),
+        no_chase=PriceEvidence("추격 금지선", 53200, ("볼린저밴드 상단",)),
+    )
+    decision = evaluate_decision(DecisionContext(current_price=53500, levels=levels, is_intraday=True, risk_reward=2.0))
+    assert decision.verdict == "사지 마라"
+    assert "추격 금지선 이상" in decision.headline
+
+
 def test_price_without_evidence_stops_analysis():
     levels = DecisionLevels(
         support=PriceEvidence("핵심 지지선", 49000, ()),
@@ -129,3 +184,20 @@ def test_price_without_evidence_stops_analysis():
     decision = evaluate_decision(DecisionContext(current_price=50000, levels=levels, is_intraday=True))
     assert decision.verdict == "분석 중단"
     assert decision.blocking_errors
+
+
+def test_collect_daily_data_prefers_validated_kiwoom_daily(monkeypatch):
+    public = _daily_frame()
+    kiwoom = public.copy()
+    kiwoom["Close"] = kiwoom["Close"] + 50
+    class KiwoomDailyProvider(MockProvider):
+        def get_daily_ohlcv(self, code: str, limit: int = 400) -> pd.DataFrame:
+            return kiwoom
+
+    monkeypatch.setattr(command_chart_analyzer, "detect_name_market", lambda code, name, end: ("삼성전자", "KOSPI", ".KS"))
+    monkeypatch.setattr(command_chart_analyzer, "load_pykrx", lambda code, start, end: command_chart_analyzer.SourceFrame("pykrx", public))
+    monkeypatch.setattr(command_chart_analyzer, "load_fdr", lambda code, start, end: command_chart_analyzer.SourceFrame("FinanceDataReader", public))
+    monkeypatch.setattr(command_chart_analyzer, "load_yfinance", lambda ticker, start, end, name="yfinance": command_chart_analyzer.SourceFrame(name, public))
+    daily = command_chart_analyzer.collect_daily_data("005930", "삼성전자", KiwoomDailyProvider())
+    assert daily.frame.iloc[-1]["Close"] == kiwoom.iloc[-1]["Close"]
+    assert not daily.stop_precision

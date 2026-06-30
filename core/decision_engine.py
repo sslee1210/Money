@@ -37,6 +37,7 @@ class DecisionContext:
     invalid_reasons: tuple[str, ...] = ()
     volume_ratio20: float | None = None
     rsi14: float | None = None
+    bollinger_upper: float | None = None
     risk_reward: float | None = None
 
 
@@ -78,7 +79,8 @@ def evaluate_decision(ctx: DecisionContext) -> DecisionResult:
     levels = ctx.levels
     assert levels.support and levels.confirmation and levels.stop and levels.no_chase
     current = ctx.current_price
-    overheat = (ctx.rsi14 is not None and ctx.rsi14 >= 70) or current >= levels.no_chase.price
+    rsi_overheated = ctx.rsi14 is not None and ctx.rsi14 >= 70
+    near_bollinger_upper = ctx.bollinger_upper is not None and current >= ctx.bollinger_upper * 0.98
     weak_rr = ctx.risk_reward is not None and ctx.risk_reward < 1.0
 
     if current < levels.stop.price:
@@ -86,12 +88,28 @@ def evaluate_decision(ctx: DecisionContext) -> DecisionResult:
         headline = "방어선 이탈: 매수 관점 폐기"
         actions = (f"{format_price(levels.stop.price)} 이탈 상태이므로 팔아라 또는 비중 축소하라.",)
         final_state = "DEFENSE_REQUIRED"
+    elif current >= levels.no_chase.price:
+        verdict = "사지 마라"
+        headline = "추격 금지선 이상: 신규매수 금지"
+        actions = (
+            "지금 바로 시장가로 사지 마라.",
+            f"{format_price(levels.no_chase.price)} 이상은 추격 금지선 이상이므로 신규매수하지 마라.",
+        )
+        final_state = "NO_BUY_OVERHEATED_BAD_RR"
+    elif rsi_overheated and near_bollinger_upper:
+        verdict = "사지 마라"
+        headline = "RSI 과열·볼린저밴드 상단 근처: 신규매수 금지"
+        actions = (
+            "지금 바로 시장가로 사지 마라.",
+            f"RSI 70 이상이고 볼린저밴드 상단 근처이므로 {format_price(levels.no_chase.price)} 아래로 식기 전까지 추격 매수하지 마라.",
+        )
+        final_state = "NO_BUY_OVERHEATED_BAD_RR"
     elif current < levels.support.price:
         verdict = "사지 마라"
         headline = "핵심 지지선 아래: 회복 전 신규매수 금지"
         actions = (f"지금 사지 마라. {format_price(levels.support.price)} 회복 전까지 신규매수하지 마라.",)
         final_state = "NO_BUY_BELOW_RECOVERY"
-    elif overheat and weak_rr:
+    elif rsi_overheated and weak_rr:
         verdict = "사지 마라"
         headline = "과열·손익비 부족: 추격매수 금지"
         actions = (f"지금 바로 시장가로 사지 마라. {format_price(levels.no_chase.price)} 이상에서는 추격 매수하지 마라.",)

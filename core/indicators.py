@@ -5,7 +5,7 @@ import pandas as pd
 from analyze_stock import add_indicators
 
 
-REQUIRED_INDICATORS = [
+DAILY_REQUIRED_INDICATORS = [
     "MA5",
     "MA10",
     "MA20",
@@ -23,6 +23,20 @@ REQUIRED_INDICATORS = [
     "거래량비율20",
     "ATR14",
 ]
+
+INTRADAY_REQUIRED_INDICATORS = [
+    "MA5",
+    "MA10",
+    "MA20",
+    "BB상단",
+    "BB중심",
+    "BB하단",
+    "거래량20평균",
+    "거래량비율20",
+]
+
+# Backward-compatible alias for the original daily validation behavior.
+REQUIRED_INDICATORS = DAILY_REQUIRED_INDICATORS
 
 
 def calculate_standard_indicators(ohlcv: pd.DataFrame) -> pd.DataFrame:
@@ -45,9 +59,17 @@ def calculate_standard_indicators(ohlcv: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def indicators_valid(indicators: pd.DataFrame) -> bool:
+def indicators_valid(indicators: pd.DataFrame, required: list[str] | tuple[str, ...] | None = None) -> bool:
     if indicators.empty:
         return False
     row = indicators.iloc[-1]
-    return all(column in indicators.columns and pd.notna(row.get(column)) for column in REQUIRED_INDICATORS)
+    required_columns = required or DAILY_REQUIRED_INDICATORS
+    return all(column in indicators.columns and pd.notna(row.get(column)) for column in required_columns)
 
+
+def daily_indicators_valid(indicators: pd.DataFrame) -> bool:
+    return indicators_valid(indicators, DAILY_REQUIRED_INDICATORS)
+
+
+def intraday_indicators_valid(indicators: pd.DataFrame) -> bool:
+    return indicators_valid(indicators, INTRADAY_REQUIRED_INDICATORS)

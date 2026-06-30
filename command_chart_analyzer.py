@@ -8,7 +8,7 @@ not expose automated trading functions.
 
 import argparse
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -34,7 +34,8 @@ from analyze_stock import (
     validation_labels,
 )
 from core.decision_engine import DecisionContext, DecisionLevels, DecisionResult, PriceEvidence, evaluate_decision, format_price
-from core.indicators import calculate_standard_indicators, indicators_valid
+from core.indicators import calculate_standard_indicators, daily_indicators_valid, intraday_indicators_valid
+from core.qa import validate_command_report
 from kiwoom.provider import KiwoomDataError, KiwoomDataProvider
 
 
@@ -50,6 +51,7 @@ class DailyData:
     reliability: str
     validation_note: str
     stop_precision: bool
+    public_reference_close: float | None = None
 
 
 def finite(value: Any) -> float | None:
@@ -83,7 +85,7 @@ def is_korea_regular_session(now: datetime | None = None) -> bool:
     return current.weekday() < 5 and time(9, 0) <= current.time() <= time(15, 30)
 
 
-def collect_daily_data(code: str, fallback_name: str | None) -> DailyData:
+def collect_daily_data(code: str, fallback_name: str | None, provider: KiwoomDataProvider | None = None) -> DailyData:
     now = today_kst()
     end_limit = latest_completed_candidate(now)
     start_daily = end_limit - timedelta(days=365 * 6)
@@ -93,31 +95,48 @@ def collect_daily_data(code: str, fallback_name: str | None) -> DailyData:
     if market == "US":
         src_primary = load_yfinance(code, start_validation, end_limit, "yfinance")
         src_secondary = load_stooq(code, start_daily, end_limit)
-        sources = [src_primary, src_secondary]
+        public_sources = [src_primary, src_secondary]
+        kiwoom_source = SourceFrame("Kiwoom", pd.DataFrame(), "미국 주식은 키움 일봉 후보에서 제외")
     else:
+        kiwoom_source = _load_kiwoom_daily_source(provider, code)
         src_pykrx = load_pykrx(code, start_daily, end_limit)
         src_fdr = load_fdr(code, start_daily, end_limit)
         src_yf = load_yfinance(code + yf_suffix, start_validation, end_limit, "yfinance")
-        sources = [src_pykrx, src_fdr, src_yf]
+        public_sources = [src_pykrx, src_fdr, src_yf]
 
-    validation, reliability, stop_precision = source_validation(sources, end_limit)
+    validation, reliability, stop_precision = source_validation(public_sources, end_limit)
     _price_label, _volume_label, validation_note = validation_labels(validation)
     if stop_precision:
         validation_note = f"{validation_note}; 대표가격 산정 불가"
 
-    representative = ""
-    if "대표가격사용" in validation.columns:
-        reps = validation[validation["대표가격사용"] == "예"]
-        if not reps.empty:
-            representative = str(reps.iloc[0]["소스"])
+    public_close = _public_reference_close(public_sources, end_limit)
+    kiwoom_eligible = False
+    if market != "US" and kiwoom_source.data is not None and not kiwoom_source.data.empty:
+        kiwoom_close = _latest_close_from_frame(kiwoom_source.data, end_limit)
+        if public_close is None:
+            stop_precision = True
+            validation_note = f"{validation_note}; 키움 일봉 단독 사용 금지: pykrx/FDR 기준 종가 없음"
+        elif kiwoom_close is None:
+            validation_note = f"{validation_note}; 키움 일봉 최신 완료 종가 산정 불가"
+        else:
+            diff_pct = _pct_diff(kiwoom_close, public_close)
+            if diff_pct > 3.0:
+                stop_precision = True
+                validation_note = f"{validation_note}; 키움 일봉과 pykrx/FDR 종가 차이 {diff_pct:.2f}%로 분석 중단"
+            else:
+                kiwoom_eligible = True
+                if diff_pct > 1.0:
+                    validation_note = f"{validation_note}; 키움 일봉과 pykrx/FDR 종가 차이 {diff_pct:.2f}% 경고"
+                else:
+                    validation_note = f"{validation_note}; 키움 일봉 교차검증 통과({diff_pct:.2f}%)"
+    elif market != "US":
+        validation_note = f"{validation_note}; 키움 일봉 후보 미사용: {kiwoom_source.note}"
 
-    selected = None
-    for src in sources:
-        if src.name == representative and src.data is not None and not src.data.empty:
-            selected = src
-            break
-    if selected is None:
-        selected = next((src for src in sources if src.data is not None and not src.data.empty), None)
+    selected = _select_daily_source(
+        [kiwoom_source if kiwoom_eligible else None, *public_sources],
+        validation,
+        end_limit,
+    )
     if selected is None:
         raise RuntimeError("대표 일봉 데이터를 수집하지 못했습니다.")
 
@@ -125,7 +144,69 @@ def collect_daily_data(code: str, fallback_name: str | None) -> DailyData:
     if frame.empty:
         raise RuntimeError("대표 일봉 데이터가 비어 있습니다.")
     frame = _standardize_daily_frame(frame)
-    return DailyData(stock_name, market, yf_suffix, frame, reliability, validation_note, stop_precision)
+    return DailyData(stock_name, market, yf_suffix, frame, reliability, validation_note, stop_precision, public_close)
+
+
+def _load_kiwoom_daily_source(provider: KiwoomDataProvider | None, code: str) -> SourceFrame:
+    if provider is None:
+        return SourceFrame("Kiwoom", pd.DataFrame(), "키움 Provider 없음")
+    try:
+        frame = provider.get_daily_ohlcv(code, limit=500)
+        return SourceFrame("Kiwoom", _standardize_daily_frame(frame))
+    except Exception as exc:
+        return SourceFrame("Kiwoom", pd.DataFrame(), f"{type(exc).__name__}: {exc}")
+
+
+def _latest_close_from_frame(frame: pd.DataFrame, end_limit: date) -> float | None:
+    if frame is None or frame.empty:
+        return None
+    data = frame[frame.index.date <= end_limit]
+    if data.empty:
+        return None
+    return finite(data.iloc[-1].get("Close"))
+
+
+def _public_reference_close(sources: list[SourceFrame], end_limit: date) -> float | None:
+    closes: list[tuple[date, float]] = []
+    for src in sources:
+        if src.name not in {"pykrx", "FinanceDataReader"} or src.data is None or src.data.empty:
+            continue
+        data = src.data[src.data.index.date <= end_limit]
+        if data.empty:
+            continue
+        close = finite(data.iloc[-1].get("Close"))
+        if close is not None and close > 0:
+            closes.append((data.index[-1].date(), close))
+    if not closes:
+        return None
+    latest = max(item[0] for item in closes)
+    latest_closes = [close for row_date, close in closes if row_date == latest]
+    return sum(latest_closes) / len(latest_closes) if latest_closes else None
+
+
+def _pct_diff(left: float, right: float) -> float:
+    if right <= 0:
+        return float("inf")
+    return abs(left - right) / right * 100
+
+
+def _select_daily_source(sources: list[SourceFrame | None], validation: pd.DataFrame, end_limit: date) -> SourceFrame | None:
+    representative = ""
+    if "대표가격사용" in validation.columns:
+        reps = validation[validation["대표가격사용"] == "예"]
+        if not reps.empty:
+            representative = str(reps.iloc[0]["소스"])
+    priority_names = ["Kiwoom", representative, "pykrx", "FinanceDataReader", "yfinance"]
+    for name in priority_names:
+        if not name:
+            continue
+        for src in sources:
+            if src is None or src.name != name or src.data is None or src.data.empty:
+                continue
+            frame = src.data[src.data.index.date <= end_limit]
+            if not frame.empty:
+                return src
+    return None
 
 
 def analyze_command_chart(
@@ -147,7 +228,7 @@ def analyze_command_chart(
     safe_name = sanitize_filename(fallback_name or code)
 
     try:
-        daily_data = collect_daily_data(code, fallback_name)
+        daily_data = collect_daily_data(code, fallback_name, provider)
         safe_name = sanitize_filename(daily_data.stock_name)
     except Exception as exc:
         invalid_reasons.append(f"대표가격 산정 불가: {exc}")
@@ -172,6 +253,10 @@ def analyze_command_chart(
     out_dir = REPORTS_DIR / f"{safe_name}_{code}"
     out_dir.mkdir(parents=True, exist_ok=True)
     current_price = safe_round(quote.price) or 0
+    quote_errors, quote_warnings = _validate_quote(quote, daily_data.public_reference_close, current_price)
+    invalid_reasons.extend(quote_errors)
+    if quote_warnings:
+        daily_data = replace(daily_data, validation_note=f"{daily_data.validation_note}; {'; '.join(quote_warnings)}")
 
     try:
         daily_ind = calculate_standard_indicators(daily_data.frame)
@@ -180,8 +265,10 @@ def analyze_command_chart(
     except Exception as exc:
         return _stop_and_write_failure(safe_name, code, invalid_reasons + [f"필수 지표 계산 실패: {exc}"])
 
-    if not indicators_valid(daily_ind) or not indicators_valid(minute3_ind) or not indicators_valid(minute5_ind):
-        invalid_reasons.append("필수 지표 계산 실패")
+    if not daily_indicators_valid(daily_ind):
+        invalid_reasons.append("일봉 필수 지표 계산 실패")
+    if not intraday_indicators_valid(minute3_ind) or not intraday_indicators_valid(minute5_ind):
+        invalid_reasons.append("분봉 필수 지표 계산 실패")
     if daily_data.reliability == "낮음" or daily_data.stop_precision:
         invalid_reasons.append(f"데이터 신뢰도 낮음: {daily_data.validation_note}")
 
@@ -199,6 +286,7 @@ def analyze_command_chart(
             invalid_reasons=tuple(invalid_reasons),
             volume_ratio20=last_valid(daily_ind.iloc[-1], "거래량비율20"),
             rsi14=last_valid(daily_ind.iloc[-1], "RSI14"),
+            bollinger_upper=last_valid(daily_ind.iloc[-1], "BB상단"),
             risk_reward=_risk_reward(levels),
         )
     )
@@ -207,6 +295,17 @@ def analyze_command_chart(
         return _stop_and_write_failure(safe_name, code, list(decision.blocking_errors))
 
     report = render_report(safe_name, code, current_price, session_intraday, daily_data, decision)
+    qa_errors = validate_command_report(
+        report,
+        decision,
+        levels,
+        is_intraday=session_intraday,
+        data_valid=not invalid_reasons,
+        current_price=current_price,
+    )
+    if qa_errors:
+        return _stop_and_write_failure(safe_name, code, qa_errors)
+
     md_path = out_dir / f"{safe_name}_{code}_조건부명령형_차트분석.md"
     html_path = out_dir / f"{safe_name}_{code}_조건부명령형_차트분석.html"
     qa_path = out_dir / f"{safe_name}_{code}_보고서_QA실패.md"
@@ -337,6 +436,8 @@ def render_report(stock_name: str, code: str, current_price: int, is_intraday: b
 
 {decision.headline}
 
+데이터 검증 메모: {daily_data.validation_note}
+
 ## 내부 검증
 
 내부 검증: 통과
@@ -384,6 +485,32 @@ def _standardize_daily_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if "TradeValue" not in out.columns:
         out["TradeValue"] = out["Close"] * out["Volume"]
     return out[["DateTime", "Open", "High", "Low", "Close", "Volume", "TradeValue"]]
+
+
+def _validate_quote(quote: Any, public_reference_close: float | None, current_price: int) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+    if current_price <= 0:
+        errors.append("키움 현재가가 0 이하입니다")
+    if quote.timestamp is None:
+        errors.append("키움 현재가 timestamp가 없어 데이터 신뢰도를 확인할 수 없습니다")
+
+    prev_close = finite(getattr(quote, "prev_close", None))
+    if prev_close is not None and public_reference_close is not None:
+        diff_pct = _pct_diff(prev_close, public_reference_close)
+        if diff_pct > 3.0:
+            errors.append(f"키움 전일종가와 pykrx/FDR 최신 완료 종가 차이 {diff_pct:.2f}%로 분석 중단")
+        elif diff_pct > 1.0:
+            warnings.append(f"키움 전일종가와 pykrx/FDR 최신 완료 종가 차이 {diff_pct:.2f}% 경고")
+
+    high = finite(getattr(quote, "high", None))
+    low = finite(getattr(quote, "low", None))
+    if high is not None and low is not None:
+        if high < low:
+            errors.append("키움 장중 고가/저가 범위가 비정상입니다")
+        elif current_price and not (low <= current_price <= high):
+            errors.append("키움 현재가가 장중 고가/저가 범위 밖입니다")
+    return errors, warnings
 
 
 def _cloud_low(row: pd.Series) -> float | None:

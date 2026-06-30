@@ -34,6 +34,12 @@ class KiwoomDataProvider:
             code=code,
             name=raw.get("name") or raw.get("종목명"),
             price=price,
+            prev_close=_number(
+                raw.get(
+                    "prev_close",
+                    raw.get("previous_close", raw.get("전일종가", raw.get("기준가"))),
+                )
+            ),
             open=_number(raw.get("open", raw.get("시가"))),
             high=_number(raw.get("high", raw.get("고가"))),
             low=_number(raw.get("low", raw.get("저가"))),
@@ -85,4 +91,3 @@ def _number(value: Any) -> float | None:
         return abs(float(str(value).replace(",", "")))
     except Exception:
         return None
-

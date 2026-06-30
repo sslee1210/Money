@@ -9,6 +9,7 @@ class Quote:
     code: str
     name: str | None
     price: float
+    prev_close: float | None = None
     open: float | None = None
     high: float | None = None
     low: float | None = None
@@ -36,4 +37,3 @@ class Candle:
     close: float
     volume: float
     trade_value: float
-

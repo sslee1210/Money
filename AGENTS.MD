@@ -80,7 +80,10 @@
 - 새 보고서, 새 차트, 새 CSV 생성이 금지된 작업에서는 분석 스크립트를 실행하지 않는다.
 - 기존 Python 실행 파일명은 바꾸지 않는다.
 - 기존 보고서 저장 경로는 바꾸지 않는다.
-- 공개 데이터만 사용하며 증권사 API 키 연결을 요구하지 않는다.
+- 기본 일봉 검증은 pykrx, FinanceDataReader, yfinance 등 공개 데이터를 유지한다.
+- 장중 현재가, 체결, 거래량, 거래대금, 1분봉/3분봉/5분봉은 사용자가 구성한 로컬 키움 브릿지를 통해 수집할 수 있다.
+- 키움 API는 분석 데이터 수집에만 사용하고 주문, 자동매매, 시장가 주문, 조건주문 기능은 구현하지 않는다.
+- 키움 브릿지 미연결 또는 키움 현재가/체결/분봉 검증 실패 시 정상 리포트를 저장하지 않고 QA 실패 파일만 저장한다.
 - TradingView 자동 스크래핑을 데이터 원천으로 사용하지 않는다.
 - 수급 데이터가 실패하면 방향을 단정하지 않는다.
 - 데이터 불일치는 동일 거래일 가격/거래량 불일치, 최신거래일 불일치, 보조 소스 지연, 핵심 소스 실패, 수급 데이터 부족으로 나눠 처리한다.
@@ -170,7 +173,9 @@ python run_regression_tests.py
 - 보고서 형식: docs/04_REPORT_FORMAT_RULES.md
 - QA 규칙: docs/05_QA_RULES.md
 - 회귀 테스트: docs/06_REGRESSION_TEST_RULES.md
+- 명령형 차트 분석: docs/06_COMMAND_CHART_ANALYZER_RULES.md
 - 명령 예시: docs/07_PROMPTS.md
+- 키움 데이터 브릿지: docs/08_KIWOOM_DATA_RULES.md
 - 키움 조건부 명령형 분석: docs/08_KIWOOM_COMMAND_ANALYZER_RULES.md
 
 작업 전 필요한 문서를 선택해 읽는다.
@@ -182,7 +187,7 @@ python run_regression_tests.py
 - 데이터 수집 오류 수정: 03, 05 확인
 - 회귀 테스트 수정: 05, 06 확인
 - 프롬프트/운영 문구 수정: 07 확인
-- 키움 API 기반 조건부 명령형 분석 수정: 03, 05, 08 확인
+- 키움 API 기반 조건부 명령형 분석 수정: 03, 05, docs/06_COMMAND_CHART_ANALYZER_RULES.md, docs/08_KIWOOM_DATA_RULES.md 확인
 
 ## 8. 기본 명령어 예시
 
