@@ -171,6 +171,7 @@ python run_regression_tests.py
 - QA 규칙: docs/05_QA_RULES.md
 - 회귀 테스트: docs/06_REGRESSION_TEST_RULES.md
 - 명령 예시: docs/07_PROMPTS.md
+- 키움 조건부 명령형 분석: docs/08_KIWOOM_COMMAND_ANALYZER_RULES.md
 
 작업 전 필요한 문서를 선택해 읽는다.
 
@@ -181,6 +182,7 @@ python run_regression_tests.py
 - 데이터 수집 오류 수정: 03, 05 확인
 - 회귀 테스트 수정: 05, 06 확인
 - 프롬프트/운영 문구 수정: 07 확인
+- 키움 API 기반 조건부 명령형 분석 수정: 03, 05, 08 확인
 
 ## 8. 기본 명령어 예시
 

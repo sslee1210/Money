@@ -219,7 +219,7 @@ def round_to_tick(price: float, direction: str = "nearest") -> int:
     return int(round(price / tick) * tick)
 
 
-def separate_buy_high_from_breakout(buy_high: float, breakout_line: float, min_ticks: int = 2) -> int:
+def separate_buy_high_from_breakout(buy_high: float, breakout_line: float, min_ticks: int = 3) -> int:
     """Keep support/re-entry ranges clearly below the daily breakout line."""
     if not np.isfinite(buy_high) or not np.isfinite(breakout_line) or breakout_line <= 0:
         return round_to_tick(buy_high, "nearest")
@@ -809,8 +809,8 @@ def compressed_low_rr_warning(swing_rr: float | None, entry_rr: float | None) ->
             invalid_parts.append("돌파 추격매수 부적합")
         invalid_text = f" {'; '.join(invalid_parts)}." if invalid_parts else ""
         if entry is not None and entry < 0.5:
-            return f"스윙 손익비 {fratio(swing)}, 회복/돌파 진입 손익비 {fratio(entry)}로 손익비 부족이며 신규매수와 돌파 추격매수 모두 부적합하고 돌파 매수 전략 성립 불가입니다.{invalid_text}"
-        return f"스윙 손익비 {fratio(swing)}, 회복/돌파 진입 손익비 {fratio(entry)}로 손익비 부족이며 신규매수 금지에 가까운 구간입니다.{invalid_text}"
+            return f"스윙 손익비 {fratio(swing)}, 회복/돌파 진입 손익비 {fratio(entry)}로 손익비 부족이며 스윙/돌파 신규매수 매력 낮음, 신규매수와 돌파 추격매수 모두 부적합하고 돌파 매수 전략 성립 불가입니다.{invalid_text}"
+        return f"스윙 손익비 {fratio(swing)}, 회복/돌파 진입 손익비 {fratio(entry)}로 손익비 부족이며 스윙/돌파 신규매수 매력 낮음, 신규매수 금지에 가까운 구간입니다.{invalid_text}"
     if (swing is not None and swing < 1.2) or (entry is not None and entry < 1.2):
         invalid_parts: list[str] = []
         if swing is not None and swing < 1.0:
@@ -1079,10 +1079,10 @@ def determine_final_action_state(
         return "NO_BUY_DATA_INVALID"
     if price_position_state == "BELOW_DEFENSE":
         return "DEFENSE_REQUIRED"
-    if volume_state == "HIGH_VOLUME_BEARISH_REVERSAL":
-        return "NO_BUY_HIGH_VOLUME_BEARISH"
     if risk_reward_state == "RR_STRATEGY_INVALID":
         return "NO_BUY_STRATEGY_INVALID"
+    if volume_state == "HIGH_VOLUME_BEARISH_REVERSAL":
+        return "NO_BUY_HIGH_VOLUME_BEARISH"
     if rsi_state == "RSI_OVERHEATED" and risk_reward_state in {"RR_BAD", "RR_STRATEGY_INVALID", "RR_WEAK"}:
         return "NO_BUY_OVERHEATED_BAD_RR"
     if data_state == "DATA_PRICE_MISMATCH":
@@ -1114,7 +1114,7 @@ FINAL_ACTION_TEMPLATES = {
         "new": "신규매수자는 데이터 검증 통과 전까지 진입하지 않습니다.",
     },
     "NO_BUY_BELOW_RECOVERY": {
-        "final": "매수 관심가 회복 전 신규매수 금지",
+        "final": "회복 확인가 회복 전 신규매수 금지",
         "primary": "회복 확인 대기",
         "reason": "현재가가 회복 확인가 아래에 있어 추격매수보다 회복 후 지지 확인이 우선입니다.",
         "new": "신규매수자는 회복 확인가 종가 안착 또는 눌림목 재지지 확인 전까지 대기합니다.",
@@ -5076,6 +5076,15 @@ def build_report(
     low_rr_summary = compressed_low_rr_warning(decision.get("손익비1"), confirm_rr)
     if low_rr_summary:
         rr_caution_text = low_rr_summary
+    deep_pullback_note = (
+        "현재가는 깊은 눌림목 구간 안 또는 회복 확인 전 구간이므로 반등 확인 후 신규매수를 검토합니다."
+        if (
+            (pull_high_value is not None and close <= pull_high_value)
+            or str((decision.get("상태코드") or {}).get("final_action_state", "")) == "NO_BUY_BELOW_RECOVERY"
+            or str((decision.get("상태코드") or {}).get("price_position_state", "")) == "BELOW_PULLBACK"
+        )
+        else ""
+    )
     state_locked = bool(decision.get("상태코드잠금"))
     if not state_locked:
         if np.isfinite(confirm_rr) and confirm_rr < 0.5:
@@ -5471,7 +5480,7 @@ def build_report(
 
 ## 6. 최종 한 문단
 
-{stock_name} {code}은 현재 {money(close)} 기준으로 {buy_context_text} {rebreak_context_text} {breakout_context_text} {target_context_text} 1차 목표는 {money(target1)}, 2차 목표는 {money(target2)}이고, {money(defense)} 이탈 시 매수 관점은 낮춥니다. {rr_caution_text} 가격/거래량 신뢰도는 {reliability_parts['가격 신뢰도']}/{reliability_parts['거래량 신뢰도']}, 수급 신뢰도는 {reliability_parts['수급 신뢰도']}, 해석 완전성은 {reliability_parts['해석 완전성']}입니다."""
+{stock_name} {code}은 현재 {money(close)} 기준으로 {deep_pullback_note} {buy_context_text} {rebreak_context_text} {breakout_context_text} {target_context_text} 1차 목표는 {money(target1)}, 2차 목표는 {money(target2)}이고, {money(defense)} 이탈 시 매수 관점은 낮춥니다. {rr_caution_text} 가격/거래량 신뢰도는 {reliability_parts['가격 신뢰도']}/{reliability_parts['거래량 신뢰도']}, 수급 신뢰도는 {reliability_parts['수급 신뢰도']}, 해석 완전성은 {reliability_parts['해석 완전성']}입니다."""
     return report
 
 

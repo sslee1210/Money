@@ -20,6 +20,16 @@ python analyze_stock_intraday.py 033100 제룡전기
 python analyze_stock.py 033100 제룡전기
 ```
 
+## 키움 조건부 명령형 차트 분석
+
+```bash
+python command_chart_analyzer.py 005930 삼성전자
+```
+
+키움 API는 분석 데이터 수집에만 사용하고 주문 기능은 사용하지 않는다.
+
+키움 현재가, 체결, 분봉 데이터 검증에 실패하면 정상 보고서를 저장하지 않고 QA 실패 파일만 저장한다.
+
 ## 미국 종목 분석 명령
 
 ```text

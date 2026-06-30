@@ -56,3 +56,11 @@ domestic_stocks:
     code: "247540"
     market_expected: KOSDAQ
     purpose: 2차전지 고변동주의 매물대, 추세 훼손, 테마주 변동성 검증
+
+command_chart_analyzer_static:
+  - name: 키움 Provider mock
+    purpose: 현재가/체결/분봉 mock 데이터로 조건부 명령형 엔진 import 및 판정 검증
+  - name: 데이터 invalid QA 실패
+    purpose: 키움 현재가 또는 분봉 실패 시 정상 리포트 저장 금지 검증
+  - name: 장중 돌파 표현
+    purpose: 장중 돌파 시 확정 표현 금지 및 3분봉/5분봉 종가 유지 조건 검증

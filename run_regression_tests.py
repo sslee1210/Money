@@ -161,6 +161,8 @@ def _minimal_yaml_load(text: str) -> dict[str, Any]:
         if line.startswith("domestic_stocks:"):
             in_domestic = True
             continue
+        if in_domestic and not line.startswith((" ", "-")) and line.strip().endswith(":"):
+            break
         if not in_domestic:
             continue
         stripped = line.strip()
@@ -698,6 +700,7 @@ def run_static_fixture_checks() -> list[str]:
         validate_volume_momentum_conflict_qa,
     )
     import pandas as pd
+    from core.decision_engine import DecisionContext, DecisionLevels, PriceEvidence, evaluate_decision
 
     current_price = 5100.0
     buy_low = 5200.0
@@ -1435,7 +1438,7 @@ def run_static_fixture_checks() -> list[str]:
                 entry_rr=0.18,
                 swing_rr=0.45,
             ),
-            {"volume_state": "HIGH_VOLUME_BEARISH_REVERSAL", "macd_state": "MACD_NEGATIVE_RECOVERY", "final_action_state": "NO_BUY_HIGH_VOLUME_BEARISH"},
+            {"volume_state": "HIGH_VOLUME_BEARISH_REVERSAL", "macd_state": "MACD_NEGATIVE_RECOVERY", "final_action_state": "NO_BUY_STRATEGY_INVALID"},
         ),
     ]
     for fixture_name, trade_state, expected in state_fixtures:
@@ -1449,6 +1452,33 @@ def run_static_fixture_checks() -> list[str]:
         for key, expected_value in expected.items():
             if state_dict.get(key) != expected_value:
                 failures.append(f"fixture {fixture_name} 상태코드 오류: {key}={state_dict.get(key)} expected {expected_value}")
+
+    command_levels = DecisionLevels(
+        support=PriceEvidence("핵심 지지선", 49000, ("20일선", "볼린저밴드 중심선")),
+        confirmation=PriceEvidence("매수 확인선", 49300, ("3분봉 20이평선", "5분봉 볼린저밴드 중심선")),
+        breakout=PriceEvidence("돌파선", 52000, ("최근 20일 고점", "볼린저밴드 상단")),
+        stop=PriceEvidence("손절/방어선", 48500, ("최근 20일 저점",)),
+        no_chase=PriceEvidence("추격 금지선", 53200, ("볼린저밴드 상단",)),
+    )
+    intraday_decision = evaluate_decision(DecisionContext(current_price=52500, levels=command_levels, is_intraday=True, risk_reward=1.5))
+    intraday_text = " ".join(intraday_decision.actions) + " " + intraday_decision.headline
+    if intraday_decision.verdict != "조건부로 사라":
+        failures.append(f"명령형 fixture 판정 오류: {intraday_decision.verdict}")
+    if "확정" in intraday_text:
+        failures.append("명령형 fixture 장중 돌파에 확정 문구가 포함되었습니다")
+    if "3분봉 또는 5분봉 종가" not in intraday_text:
+        failures.append("명령형 fixture 장중 조건에 분봉 종가 유지 조건이 없습니다")
+
+    missing_evidence_levels = DecisionLevels(
+        support=PriceEvidence("핵심 지지선", 49000, ()),
+        confirmation=command_levels.confirmation,
+        breakout=command_levels.breakout,
+        stop=command_levels.stop,
+        no_chase=command_levels.no_chase,
+    )
+    stopped_decision = evaluate_decision(DecisionContext(current_price=50000, levels=missing_evidence_levels, is_intraday=True))
+    if stopped_decision.verdict != "분석 중단" or not stopped_decision.blocking_errors:
+        failures.append("명령형 fixture 가격 근거 누락 시 분석 중단 처리 실패")
     return failures
 
 

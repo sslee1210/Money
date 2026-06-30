@@ -969,6 +969,13 @@ def make_report(
     holder_text = state_actions["holder_action"]
     additional_buyer_text = state_actions["add_buyer_action"]
     stop_loss_action_text = state_actions["stop_loss_action"]
+    deep_pullback_note = (
+        pullback_status_text
+        if "깊은 눌림목 구간 안" in pullback_status_text
+        else "현재가는 깊은 눌림목 구간 안 또는 회복 확인 전 구간이므로 반등 확인 후 신규매수를 검토합니다."
+        if trade_state.final_action_state == "NO_BUY_BELOW_RECOVERY" or trade_state.price_position_state == "BELOW_PULLBACK"
+        else ""
+    )
     if current_price < intraday_warning_line and "방어 관찰이 우선" not in holder_text:
         holder_text = f"현재가가 장중 주의선 {money(intraday_warning_line)} 아래라 보유자는 방어 관찰이 우선입니다. {holder_text}"
     state_code_table = state_code_report_rows(trade_state)
@@ -1624,7 +1631,7 @@ def make_report(
             f"수급 신뢰도는 {reliability_parts['수급 신뢰도']}, 해석 완전성은 {reliability_parts['해석 완전성']}입니다."
             if volume_momentum_conflict["applies"]
             else (
-                f"{stock_name} {code}은 현재 {money(current_price)} 기준으로 {buy_context_text} {rebreak_context_text} {breakout_context_text} "
+                f"{stock_name} {code}은 현재 {money(current_price)} 기준으로 {deep_pullback_note} {buy_context_text} {rebreak_context_text} {breakout_context_text} "
                 f"{target_context_text} 1차 목표는 {money(entry_target1)}, 2차 목표는 {money(entry_target2)}이며 {money(defense)} 이탈 시 스윙 관점은 낮춥니다. "
                 f"{rr_caution_text} 가격/거래량 신뢰도는 {reliability_parts['가격 신뢰도']}/{reliability_parts['거래량 신뢰도']}, "
                 f"수급 신뢰도는 {reliability_parts['수급 신뢰도']}, 해석 완전성은 {reliability_parts['해석 완전성']}입니다."
