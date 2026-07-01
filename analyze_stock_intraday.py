@@ -1150,9 +1150,16 @@ def make_report(
     trading_total = trading_scores["총점"]
     validation_status_text = " ".join([str(intraday_price_label), str(intraday_volume_label), str(daily_price_label), str(daily_volume_label)])
     yfinance_delay_text = str(yfinance_note)
-    data_action_needed = any(word in validation_status_text for word in ["지연", "stale", "불일치", "경고", "실패"]) or any(
-        word in yfinance_delay_text for word in ["지연", "stale", "최신거래일 불일치", "가격 불일치", "거래량 불일치"]
-    )
+    data_action_needed = any(word in validation_status_text for word in ["지연", "stale", "불일치", "경고", "실패"])
+    if not (
+        intraday_price_label == "통과"
+        and intraday_volume_label == "통과"
+        and daily_price_label == "통과"
+        and daily_volume_label == "통과"
+    ):
+        data_action_needed = data_action_needed or any(
+            word in yfinance_delay_text for word in ["지연", "stale", "최신거래일 불일치", "가격 불일치", "거래량 불일치"]
+        )
     data_action_prefix = "데이터 상태: 장중/완료 일봉 소스 지연 여부 확인; " if data_action_needed else ""
     today_action_prices = (
         f"{data_action_prefix}"

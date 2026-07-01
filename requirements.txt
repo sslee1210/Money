@@ -6,7 +6,7 @@ requests
 finance-datareader
 pykrx>=1.2.8; python_version >= "3.11"
 pykrx<1.2.8; python_version < "3.11"
-yfinance>=0.2.36,<0.2.40
+yfinance>=0.2.40
 markdown
 beautifulsoup4
 lxml

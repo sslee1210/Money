@@ -5000,7 +5000,10 @@ def build_report(
         f"{money(pull_high_value) if pull_high_value is not None else pull} 재이탈 시 단기 비중 축소 검토, "
         f"{money(target1)} 접근 시 1차 익절 검토, {money(defense)} 이탈 시 방어/손절합니다."
     )
-    data_action_needed = any(word in str(validation_note) for word in ["지연", "stale", "불일치", "경고", "실패", "제외"])
+    data_action_needed = (
+        any(word in str(validation_note) for word in ["지연", "stale", "불일치", "경고", "실패", "제외"])
+        and not (price_label == "통과" and vol_label == "통과")
+    )
     data_status_prefix = "데이터 상태: 보조 소스 지연/불일치 여부 확인; " if data_action_needed else ""
     today_action_prices = (
         f"{data_status_prefix}"

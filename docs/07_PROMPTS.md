@@ -22,6 +22,12 @@ python analyze_stock_intraday.py 033100 제룡전기
 python money_assistant.py
 ```
 
+Windows에서는 아래 파일을 더블클릭해도 된다.
+
+```text
+Money_Assistant.bat
+```
+
 입력 예시:
 
 ```text

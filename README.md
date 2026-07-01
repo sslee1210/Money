@@ -45,6 +45,12 @@
 python money_assistant.py
 ```
 
+Windows에서는 아래 파일을 더블클릭해도 같은 프롬프트가 열린다.
+
+```text
+Money_Assistant.bat
+```
+
 실행 후 프롬프트에 아래처럼 입력한다.
 
 ```text
