@@ -375,14 +375,24 @@ def choose_intraday_basis(rows: list[dict[str, Any]], prev_close: float, now: da
     if usable.empty:
         return {"현재가": prev_close, "전일종가": prev_close}, "낮음", "실패", "실패", {}
 
+    realtime_sources = ["네이버금융 realtime", "네이버 모바일 basic"]
+    realtime_usable = usable[usable["소스"].isin(realtime_sources)].copy()
     primary_price_usable = usable[~usable["소스"].astype(str).str.contains("NXT/통합|yfinance", na=False)].copy()
-    price_usable = primary_price_usable if not primary_price_usable.empty else usable[~usable["소스"].astype(str).str.contains("NXT/통합 참고", na=False)].copy()
+    price_usable = (
+        realtime_usable
+        if not realtime_usable.empty
+        else primary_price_usable
+        if not primary_price_usable.empty
+        else usable[~usable["소스"].astype(str).str.contains("NXT/통합 참고", na=False)].copy()
+    )
     prices = pd.to_numeric(price_usable["현재가"], errors="coerce")
     regular_volume_rows = usable[~usable["소스"].astype(str).str.contains("NXT/통합|yfinance", na=False)].copy()
     vols = pd.to_numeric(regular_volume_rows.get("거래량"), errors="coerce")
     diff = (prices.max() - prices.min()) / prices.mean() * 100 if prices.mean() else np.nan
     vol_diff = (vols.max() - vols.min()) / vols.mean() * 100 if vols.notna().sum() >= 2 and vols.mean() else np.nan
     price_label = "실패" if diff > 1.0 else ("경고" if diff > 0.5 else "통과")
+    if price_label == "실패" and realtime_usable.empty:
+        price_label = "장중 경고"
     volume_label = "경고" if np.isfinite(vol_diff) and vol_diff > 15 else "통과"
     reliability = "낮음" if price_label == "실패" else ("중간" if price_label in {"경고", "장중 경고"} or volume_label == "경고" else "높음")
 
@@ -906,8 +916,15 @@ def make_report(
                 f"회복/돌파 진입 손익비 {fratio(confirm_rr)}로 낮아 회복 확인가 또는 돌파 확인가 조건 미충족 상태에서는 "
                 f"지금 바로 신규매수 조건은 충족하지 못했습니다. {low_rr_summary}"
             )
-    elif rr_low_warnings:
-        rr_caution_text = one_line(f"{rr_caution_text} {'; '.join(rr_low_warnings)}.")
+    if rr_low_warnings:
+        extra_rr_warnings = []
+        for warning in rr_low_warnings:
+            if "장중 신규 진입 매력 낮음" in warning and "장중 신규 진입 매력 낮음" not in rr_caution_text:
+                extra_rr_warnings.append(warning)
+            elif "과열 추격 금지" in warning and "과열 추격 금지" not in rr_caution_text:
+                extra_rr_warnings.append(warning)
+        if extra_rr_warnings:
+            rr_caution_text = one_line(f"{rr_caution_text} {'; '.join(dict.fromkeys(extra_rr_warnings))}.")
     if (
         np.isfinite(rsi_value)
         and rsi_value >= 70
@@ -973,7 +990,7 @@ def make_report(
         primary_strategy = f"{primary_strategy}; {volume_momentum_conflict['primary_strategy']}"
     deep_pullback_note = (
         pullback_status_text
-        if "깊은 눌림목 구간 안" in pullback_status_text
+        if "깊은 눌림목 구간 안" in pullback_status_text or "겹치는 구간" in pullback_status_text
         else "현재가는 깊은 눌림목 구간 안 또는 회복 확인 전 구간이므로 반등 확인 후 신규매수를 검토합니다."
         if trade_state.final_action_state == "NO_BUY_BELOW_RECOVERY" or trade_state.price_position_state == "BELOW_PULLBACK"
         else ""
