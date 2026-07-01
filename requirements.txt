@@ -1,15 +1,16 @@
-pandas>=2.0,<2.1; python_version < "3.12"
-pandas>=2.3; python_version >= "3.12"
-numpy>=1.24,<2; python_version < "3.12"
-numpy>=2; python_version >= "3.12"
+pandas>=2.0,<2.1; python_version < "3.11"
+pandas>=2.3; python_version >= "3.11"
+numpy>=1.24,<2; python_version < "3.11"
+numpy>=2; python_version >= "3.11"
 requests
 finance-datareader
-pykrx
+pykrx>=1.2.8; python_version >= "3.11"
+pykrx<1.2.8; python_version < "3.11"
 yfinance>=0.2.36,<0.2.40
 markdown
 beautifulsoup4
 lxml
 pytest
 PyYAML
-matplotlib>=3.7,<3.8; python_version < "3.12"
-matplotlib>=3.8; python_version >= "3.12"
+matplotlib>=3.7,<3.8; python_version < "3.11"
+matplotlib>=3.8; python_version >= "3.11"
