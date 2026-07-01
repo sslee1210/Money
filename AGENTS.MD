@@ -177,6 +177,7 @@ python run_regression_tests.py
 - 명령 예시: docs/07_PROMPTS.md
 - 키움 데이터 브릿지: docs/08_KIWOOM_DATA_RULES.md
 - 키움 조건부 명령형 분석: docs/08_KIWOOM_COMMAND_ANALYZER_RULES.md
+- SSE 전용 통합 차트 지표: docs/09_SSE_INDICATOR_RULES.md
 
 작업 전 필요한 문서를 선택해 읽는다.
 

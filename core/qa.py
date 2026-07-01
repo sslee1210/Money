@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from core.decision_engine import DecisionLevels, DecisionResult, Verdict
+from core.sse_indicator import SSEResult, validate_sse_levels
 
 
 ALLOWED_VERDICTS: set[Verdict] = {
@@ -22,6 +23,7 @@ def validate_command_report(
     is_intraday: bool,
     data_valid: bool,
     current_price: int,
+    sse_result: SSEResult | None = None,
 ) -> list[str]:
     """Return blocking QA errors for a command-style analysis report."""
 
@@ -70,4 +72,39 @@ def validate_command_report(
         errors.append("내부 검증 섹션 누락")
     if "내부 검증: 통과" in report and (decision.blocking_errors or not data_valid):
         errors.append("QA 미통과 상태에서 내부 검증 통과가 출력되었습니다")
+    if sse_result is not None:
+        errors.extend(validate_sse_report(report, decision, sse_result, is_intraday=is_intraday, current_price=current_price))
+    return errors
+
+
+def validate_sse_report(
+    report: str,
+    decision: DecisionResult,
+    sse_result: SSEResult,
+    *,
+    is_intraday: bool,
+    current_price: int,
+) -> list[str]:
+    errors: list[str] = []
+    levels = sse_result.levels
+    errors.extend(validate_sse_levels(levels))
+    errors.extend(sse_result.blocking_errors)
+    buy_positive = decision.verdict in {"사라", "조건부로 사라"}
+    if current_price >= levels.no_chase and buy_positive:
+        errors.append("SSE 추격 금지선 이상에서 신규매수 긍정 판정이 생성되었습니다")
+    if levels.rr1 < 1.2 and buy_positive:
+        errors.append("SSE RR1 < 1.2인데 신규매수 긍정 판정이 생성되었습니다")
+    if levels.pressure >= 1.5 and buy_positive:
+        errors.append("SSE 압력값 과열권인데 신규매수 긍정 판정이 생성되었습니다")
+    if levels.pressure < -1.0 and buy_positive:
+        errors.append("SSE 압력값 약세 이탈인데 신규매수 긍정 판정이 생성되었습니다")
+    if is_intraday and any(phrase in report for phrase in ["확정 돌파", "일봉 돌파 확정", "돌파 확인 완료"]):
+        errors.append("SSE 장중 리포트에 확정 돌파 표현이 포함되었습니다")
+    if "## SSE Indicator 분석" not in report:
+        errors.append("SSE Indicator 분석 섹션 누락")
+    if "산출 근거:" not in report:
+        errors.append("SSE 산출 근거 누락")
+    for label in ["예상 진입가", "예상 손절가", "1차 익절가", "2차 익절가", "추격 금지선"]:
+        if label not in report:
+            errors.append(f"SSE {label} 출력 누락")
     return errors

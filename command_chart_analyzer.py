@@ -36,6 +36,7 @@ from analyze_stock import (
 from core.decision_engine import DecisionContext, DecisionLevels, DecisionResult, PriceEvidence, evaluate_decision, format_price
 from core.indicators import calculate_standard_indicators, daily_indicators_valid, intraday_indicators_valid
 from core.qa import validate_command_report
+from core.sse_indicator import SSEResult, calculate_sse_indicator
 from kiwoom.provider import KiwoomDataError, KiwoomDataProvider
 
 
@@ -282,6 +283,16 @@ def analyze_command_chart(
     if daily_close and current_price and abs(current_price - daily_close) / daily_close > 0.30:
         invalid_reasons.append("키움 현재가와 일봉 대표 가격의 비정상 불일치")
 
+    sse_result = calculate_sse_indicator(
+        daily_ind,
+        minute3_ind,
+        minute5_ind,
+        current_price=current_price,
+        is_intraday=session_intraday,
+    )
+    if sse_result.blocking_errors:
+        invalid_reasons.extend(sse_result.blocking_errors)
+
     levels = build_decision_levels(current_price, daily_ind, minute3_ind, minute5_ind)
     decision = evaluate_decision(
         DecisionContext(
@@ -296,11 +307,13 @@ def analyze_command_chart(
             risk_reward=_risk_reward(levels),
         )
     )
+    if not decision.stopped:
+        decision = apply_sse_safety_filter(decision, sse_result, current_price, session_intraday)
 
     if decision.stopped:
         return _stop_and_write_failure(safe_name, code, list(decision.blocking_errors))
 
-    report = render_report(safe_name, code, current_price, session_intraday, daily_data, decision)
+    report = render_report(safe_name, code, current_price, session_intraday, daily_data, decision, sse_result)
     qa_errors = validate_command_report(
         report,
         decision,
@@ -308,6 +321,7 @@ def analyze_command_chart(
         is_intraday=session_intraday,
         data_valid=not invalid_reasons,
         current_price=current_price,
+        sse_result=sse_result,
     )
     if qa_errors:
         return _stop_and_write_failure(safe_name, code, qa_errors)
@@ -398,7 +412,130 @@ def build_decision_levels(current_price: int, daily_ind: pd.DataFrame, minute3_i
     return DecisionLevels(support=support, confirmation=confirmation, breakout=breakout, stop=stop, no_chase=no_chase, target1=target1, target2=target2)
 
 
-def render_report(stock_name: str, code: str, current_price: int, is_intraday: bool, daily_data: DailyData, decision: DecisionResult) -> str:
+SSE_SAFETY_PRIORITY = {
+    "사라": 0,
+    "조건부로 사라": 1,
+    "보유하라": 2,
+    "기다려라": 3,
+    "사지 마라": 4,
+    "팔아라": 5,
+    "분석 중단": 6,
+}
+
+
+def apply_sse_safety_filter(decision: DecisionResult, sse_result: SSEResult, current_price: int, is_intraday: bool) -> DecisionResult:
+    if sse_result.verdict == "분석 중단":
+        return replace(
+            decision,
+            verdict="분석 중단",
+            blocking_errors=tuple(decision.blocking_errors) + tuple(sse_result.blocking_errors or ("SSE 분석 중단",)),
+            final_action_state="NO_BUY_DATA_INVALID",
+        )
+    if SSE_SAFETY_PRIORITY.get(sse_result.verdict, 0) <= SSE_SAFETY_PRIORITY.get(decision.verdict, 0):
+        return decision
+
+    levels = sse_result.levels
+    sse_evidence = (
+        PriceEvidence("SSE 예상 진입가", safe_round(levels.entry) or int(levels.entry), ("SSE 기준선+통합 변동성",)),
+        PriceEvidence("SSE 예상 손절가", safe_round(levels.stop) or int(levels.stop), ("SSE 손절 공식",)),
+        PriceEvidence("SSE 추격 금지선", safe_round(levels.no_chase) or int(levels.no_chase), ("SSE 기준선+1.50*통합 변동성",)),
+    )
+    action, final_state = _sse_action_text(sse_result, current_price, is_intraday)
+    return replace(
+        decision,
+        verdict=sse_result.verdict,
+        headline=f"{decision.headline}; SSE 안전 필터 적용: {sse_result.verdict}",
+        actions=(action,) + decision.actions,
+        no_buy_conditions=decision.no_buy_conditions + (_sse_no_buy_text(sse_result),),
+        sell_conditions=decision.sell_conditions + (f"SSE 예상 손절가 {format_price(levels.stop)} 이탈 시 팔아라 또는 비중 축소하라.",),
+        holder_conditions=decision.holder_conditions + (f"SSE 압력값 {levels.pressure:.2f} 기준으로 보유자는 {format_price(levels.target1)} 접근 시 1차 익절을 관리하라.",),
+        price_evidence=decision.price_evidence + sse_evidence,
+        final_action_state=final_state,
+    )
+
+
+def _sse_action_text(sse_result: SSEResult, current_price: int, is_intraday: bool) -> tuple[str, str]:
+    levels = sse_result.levels
+    if sse_result.verdict == "팔아라":
+        return (f"SSE 예상 손절가 {format_price(levels.stop)} 이탈 구조이므로 팔아라 또는 비중 축소하라.", "DEFENSE_REQUIRED")
+    if sse_result.verdict == "사지 마라":
+        return (f"SSE 기준 신규매수 금지. {format_price(levels.no_chase)} 이상 추격 금지 또는 손익비 부족 구간이다.", "NO_BUY_OVERHEATED_BAD_RR")
+    if sse_result.verdict == "기다려라":
+        return (f"SSE 예상 진입가 {format_price(levels.entry)} 회복 전까지 기다려라.", "WAIT_RECOVERY_CLOSE")
+    if sse_result.verdict == "보유하라":
+        return (f"SSE 1차 익절가 {format_price(levels.target1)} 전까지 보유하되 압력값을 관리하라.", "HOLD_AND_TRAIL")
+    suffix = "3분봉 또는 5분봉 종가 유지 시에만 1차 진입하라." if is_intraday else "종가 유지 확인 후에만 1차 진입하라."
+    return (f"SSE 예상 진입가 {format_price(levels.entry)} 이상에서 {suffix}", "WATCH_INTRADAY_BREAKOUT" if is_intraday else "HOLD_AND_TRAIL")
+
+
+def _sse_no_buy_text(sse_result: SSEResult) -> str:
+    levels = sse_result.levels
+    return f"SSE 추격 금지선 {format_price(levels.no_chase)} 이상 또는 RR1 {levels.rr1:.2f}배 미만이면 사지 마라."
+
+
+def render_sse_section(sse_result: SSEResult) -> str:
+    levels = sse_result.levels
+    evidence_lines = "\n".join(
+        f"* {item.label} {format_sse_value(item.value)}: {item.formula} - {item.reason}"
+        for item in sse_result.evidence
+    )
+    warning_lines = "\n".join(f"* {warning}" for warning in sse_result.warnings) if sse_result.warnings else "* 경고 없음"
+    return f"""## SSE Indicator 분석
+
+SSE 기준선: {format_sse_price(levels.base)}
+SSE 상단선: {format_sse_price(levels.upper)}
+SSE 하단선: {format_sse_price(levels.lower)}
+SSE 압력값: {format_sse_number(levels.pressure)}
+
+예상 진입가: {format_sse_price(levels.entry)}
+예상 손절가: {format_sse_price(levels.stop)}
+1차 익절가: {format_sse_price(levels.target1)}
+2차 익절가: {format_sse_price(levels.target2)}
+추격 금지선: {format_sse_price(levels.no_chase)}
+
+1차 목표 기준 손익비: {format_sse_number(levels.rr1)}배
+2차 목표 기준 손익비: {format_sse_number(levels.rr2)}배
+
+SSE 최종 판정: {sse_result.verdict}
+
+산출 근거:
+
+{evidence_lines}
+
+SSE 경고:
+
+{warning_lines}
+"""
+
+
+def format_sse_number(value: float | None) -> str:
+    v = finite(value)
+    return "계산 불가" if v is None else f"{v:.2f}"
+
+
+def format_sse_price(value: float | None) -> str:
+    v = finite(value)
+    return "계산 불가" if v is None else format_price(v)
+
+
+def format_sse_value(value: float | None) -> str:
+    v = finite(value)
+    if v is None:
+        return "계산 불가"
+    if abs(v) >= 100:
+        return format_price(v)
+    return f"{v:.2f}"
+
+
+def render_report(
+    stock_name: str,
+    code: str,
+    current_price: int,
+    is_intraday: bool,
+    daily_data: DailyData,
+    decision: DecisionResult,
+    sse_result: SSEResult | None = None,
+) -> str:
     session_text = "장중" if is_intraday else "장마감 이후"
     evidence = "\n".join(f"* {item.summary()}" for item in decision.price_evidence)
     actions = "\n".join(f"* {line}" for line in decision.actions)
@@ -406,6 +543,7 @@ def render_report(stock_name: str, code: str, current_price: int, is_intraday: b
     no_buy = "\n".join(f"* {line}" for line in decision.no_buy_conditions)
     sell = "\n".join(f"* {line}" for line in decision.sell_conditions)
     holder = "\n".join(f"* {line}" for line in decision.holder_conditions)
+    sse_section = render_sse_section(sse_result) if sse_result is not None else ""
     return f"""# {stock_name} {code} 조건부 명령형 차트 분석
 
 [최종 매매 지시]
@@ -443,6 +581,8 @@ def render_report(stock_name: str, code: str, current_price: int, is_intraday: b
 {decision.headline}
 
 데이터 검증 메모: {daily_data.validation_note}
+
+{sse_section}
 
 ## 내부 검증
 

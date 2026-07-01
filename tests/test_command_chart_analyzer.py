@@ -137,6 +137,20 @@ def test_invalid_data_writes_only_qa_failure(tmp_path, monkeypatch):
     assert not (out_dir / "삼성전자_005930_조건부명령형_차트분석.html").exists()
 
 
+def test_success_report_includes_sse_indicator_section(tmp_path, monkeypatch):
+    monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(command_chart_analyzer, "is_korea_regular_session", lambda now=None: False)
+    monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
+    output = command_chart_analyzer.analyze_command_chart("005930", "삼성전자", provider=MockProvider())
+    report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
+    assert "분석 완료" in output
+    text = report.read_text(encoding="utf-8")
+    assert "## SSE Indicator 분석" in text
+    assert "SSE 기준선" in text
+    assert "SSE 최종 판정" in text
+    assert "산출 근거:" in text
+
+
 def test_quote_prev_close_mismatch_stops_normal_report(tmp_path, monkeypatch):
     monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
     monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
