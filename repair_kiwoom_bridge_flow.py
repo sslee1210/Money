@@ -1,4 +1,15 @@
-from typing import Any, Dict, List
+from pathlib import Path
+
+ROOT = Path.cwd()
+target = ROOT / "kiwoom_bridge_server" / "kiwoom_bridge_flow.py"
+
+if not target.exists():
+    raise SystemExit(
+        f"[ERROR] 파일을 찾지 못했습니다: {target}\n"
+        "Money 저장소 루트에서 실행하세요. 예: C:\\Users\\sslee\\Desktop\\Money"
+    )
+
+content = '''from typing import Any, Dict, List
 
 import kiwoom_bridge as base
 import kiwoom_bridge_kiwoom_only as ko
@@ -108,3 +119,9 @@ base.KiwoomController = KiwoomFlowController
 
 if __name__ == "__main__":
     base.main()
+'''
+
+target.write_text(content, encoding="utf-8")
+print(f"[OK] restored and patched: {target}")
+print("[OK] kiwoom_bridge_flow.py 문법 오류 복구 완료")
+print("[OK] GetMasterStockInfo 호출 우회 적용 완료")
