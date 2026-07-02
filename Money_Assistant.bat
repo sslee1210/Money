@@ -16,6 +16,7 @@ echo.
 if "%KIWOOM_BRIDGE_URL%"=="" (
     set "KIWOOM_BRIDGE_URL=http://127.0.0.1:8765"
 )
+set "KIWOOM_BRIDGE_BAT=%USERPROFILE%\Desktop\millionaire\start-bridge.bat"
 
 echo [kiwoom] Bridge URL: %KIWOOM_BRIDGE_URL%
 
@@ -51,7 +52,6 @@ echo [kiwoom] Checking local bridge connection...
 ".venv\Scripts\python.exe" -B -c "import os,socket,urllib.parse; u=urllib.parse.urlparse(os.environ.get('KIWOOM_BRIDGE_URL','')); host=u.hostname or '127.0.0.1'; port=u.port or 80; s=socket.create_connection((host,port),timeout=1.5); s.close()" >nul 2>nul
 if errorlevel 1 (
     echo [kiwoom] Local bridge is not reachable. Trying to start existing Kiwoom bridge...
-    set "KIWOOM_BRIDGE_BAT=%USERPROFILE%\Desktop\millionaire\start-bridge.bat"
     if exist "%KIWOOM_BRIDGE_BAT%" (
         echo [kiwoom] Starting: %KIWOOM_BRIDGE_BAT%
         start "Kiwoom Bridge" "%KIWOOM_BRIDGE_BAT%"
