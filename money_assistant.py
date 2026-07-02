@@ -46,11 +46,6 @@ STOP_WORDS = {
     "일봉",
     "스윙",
     "장외",
-    "키움필수",
-    "필수",
-    "구형장중",
-    "legacy",
-    "레거시",
 }
 
 
@@ -72,21 +67,8 @@ def is_korean_market_open(now: datetime | None = None) -> bool:
 
 
 def detect_mode(text: str) -> str:
-    # 기본 사용자 입력은 항상 게이트형 통합 분석으로 보낸다.
-    # "~ 분석해줘", "장중 분석해줘", "실시간 분석해줘", "키움 분석해줘",
-    # "조건부 분석해줘"는 모두 공개 데이터 + 키움 가능 시 실시간 보정 +
-    # SSE 통합 보고서 1개를 생성한다.
-    # 키움 필수 분석은 "키움필수" 또는 "키움 필수"를 명시한 경우에만 실행한다.
-    # 기존 analyze_stock_intraday.py는 "구형장중" 또는 "legacy 장중"을 명시한 경우에만 실행한다.
-    normalized = normalize_query(text).replace(" ", "")
-    lowered = normalized.lower()
-
-    if "구형장중" in normalized or "레거시장중" in normalized or "legacy장중" in lowered:
-        return "intraday"
-    if "키움필수" in normalized or "키움강제" in normalized or "kiwoomrequired" in lowered:
-        return "kiwoom"
-    if any(word in normalized for word in ("일봉", "스윙", "장외")):
-        return "daily"
+    # Money Assistant의 자연어 입력은 하나의 통합 분석 파이프라인만 사용한다.
+    # 키움 브릿지/로그인이 준비되지 않으면 정상 리포트 대신 QA 실패로 중단한다.
     return "integrated"
 
 
@@ -220,16 +202,15 @@ def run_request(request: ParsedRequest) -> str:
 
 def run_text(text: str) -> str:
     request = parse_request(text)
-    label = {"kiwoom": "키움 필수 조건부 명령형", "integrated": "통합", "intraday": "구형 장중", "daily": "일봉/스윙"}[request.mode]
+    label = "통합"
     print(f"[분석 실행] {label}: {request.code} {request.name or ''}".strip())
     return run_request(request)
 
 
 def repl() -> int:
     print("Money 분석 프롬프트")
-    print("예: 삼성전자 분석해줘 / 005930 장중 분석해줘 / 삼성전자 키움 분석해줘")
-    print("기본 입력은 공개 데이터 + 키움 가능 시 실시간 보정 + SSE 통합 보고서 1개로 생성됩니다.")
-    print("키움 필수: '키움필수' 포함 / 구형 장중: '구형장중' 포함")
+    print("예: 삼성전자 분석해줘 / 005930 삼성전자 분석해줘")
+    print("키움 로그인 완료 후 공개 데이터 + 키움 실시간 보정 + SSE 통합 보고서 1개로 생성됩니다.")
     print("종료: exit 또는 quit")
     while True:
         try:

@@ -31,14 +31,6 @@ def test_parse_code_intraday_request_defaults_to_integrated():
     assert request.mode == "integrated"
 
 
-def test_parse_legacy_intraday_request():
-    request = money_assistant.parse_request("005930 삼성전자 구형장중 분석해줘")
-
-    assert request.code == "005930"
-    assert request.name == "삼성전자"
-    assert request.mode == "intraday"
-
-
 def test_parse_kiwoom_request_defaults_to_integrated(monkeypatch):
     monkeypatch.setattr(money_assistant, "load_krx_tickers", fake_tickers)
 
@@ -47,16 +39,6 @@ def test_parse_kiwoom_request_defaults_to_integrated(monkeypatch):
     assert request.code == "005930"
     assert request.name == "삼성전자"
     assert request.mode == "integrated"
-
-
-def test_parse_kiwoom_required_request(monkeypatch):
-    monkeypatch.setattr(money_assistant, "load_krx_tickers", fake_tickers)
-
-    request = money_assistant.parse_request("삼성전자 키움필수 조건부 분석해줘")
-
-    assert request.code == "005930"
-    assert request.name == "삼성전자"
-    assert request.mode == "kiwoom"
 
 
 def test_run_request_dispatches_without_order_functions(monkeypatch):

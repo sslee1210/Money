@@ -52,7 +52,7 @@ if errorlevel 1 (
 echo [kiwoom] Checking local bridge connection...
 ".venv\Scripts\python.exe" -B kiwoom_bridge_status.py --quiet >nul 2>nul
 if errorlevel 1 (
-    echo [kiwoom] Local bridge is not reachable. Trying to start existing Kiwoom bridge...
+    echo [kiwoom] Local bridge is not reachable. Trying to start Kiwoom bridge...
     if not exist "%KIWOOM_BRIDGE_BAT%" (
         set "KIWOOM_BRIDGE_BAT=%KIWOOM_FALLBACK_BRIDGE_BAT%"
     )
@@ -60,16 +60,21 @@ if errorlevel 1 (
         echo [kiwoom] Starting: %KIWOOM_BRIDGE_BAT%
         start "Kiwoom Bridge" "%KIWOOM_BRIDGE_BAT%"
         echo [kiwoom] Waiting for bridge. Complete the Kiwoom login window if it appears.
-        for /l %%i in (1,1,30) do (
+        for /l %%i in (1,1,90) do (
             ".venv\Scripts\python.exe" -B kiwoom_bridge_status.py --quiet >nul 2>nul
             if not errorlevel 1 goto kiwoom_bridge_ready
             timeout /t 2 /nobreak >nul
         )
-        echo [kiwoom] Bridge did not become reachable yet. Integrated analysis will keep public-data analysis and limit intraday buy instructions.
-        echo [kiwoom] Keep the bridge window open and finish login, then run analysis again.
+        echo.
+        echo [error] Kiwoom bridge did not become reachable.
+        echo [error] Keep the bridge window open, complete Kiwoom login, then run Money_Assistant.bat again.
+        pause
+        exit /b 1
     ) else (
         echo [kiwoom] Existing bridge launcher not found: %KIWOOM_BRIDGE_BAT%
-        echo [kiwoom] Integrated analysis will keep public-data analysis and limit intraday buy instructions.
+        echo [error] Kiwoom bridge is required for Money Assistant analysis.
+        pause
+        exit /b 1
     )
 ) else (
     goto kiwoom_bridge_ready
@@ -79,14 +84,16 @@ goto kiwoom_bridge_checked
 :kiwoom_bridge_ready
 echo [kiwoom] Local bridge is reachable. Checking Kiwoom login status...
 ".venv\Scripts\python.exe" -B kiwoom_bridge_status.py
-for /l %%i in (1,1,60) do (
+for /l %%i in (1,1,180) do (
     ".venv\Scripts\python.exe" -B kiwoom_bridge_status.py --require-login --quiet >nul 2>nul
     if not errorlevel 1 goto kiwoom_login_ready
     timeout /t 2 /nobreak >nul
 )
-echo [kiwoom] Bridge is running, but Kiwoom login is not completed yet.
-echo [kiwoom] Integrated analysis will keep public-data analysis and limit intraday buy instructions until login completes.
-goto kiwoom_bridge_checked
+echo.
+echo [error] Bridge is running, but Kiwoom login is not completed.
+echo [error] Complete the Kiwoom login window, then run Money_Assistant.bat again.
+pause
+exit /b 1
 
 :kiwoom_login_ready
 echo [kiwoom] Kiwoom login is ready. Realtime correction will be attempted.
@@ -95,8 +102,8 @@ echo [kiwoom] Kiwoom login is ready. Realtime correction will be attempted.
 
 echo.
 echo [run] Type a request at the Money prompt.
-echo Example: samsung style input is supported in Korean inside the prompt.
-echo Example: 005930 Samsung intraday
+echo Example: Samsung Electronics in Korean is supported.
+echo Example: 005930 Samsung Electronics
 echo Exit: exit
 echo.
 

@@ -730,7 +730,7 @@ def analyze_integrated_chart(
     provider: KiwoomDataProvider | None = None,
     now: datetime | None = None,
 ) -> str:
-    return analyze_command_chart(code, fallback_name, provider=provider, now=now, require_kiwoom=False, sse_required=False)
+    return analyze_command_chart(code, fallback_name, provider=provider, now=now, require_kiwoom=True, sse_required=True)
 
 
 def _standardize_daily_frame(frame: pd.DataFrame) -> pd.DataFrame:

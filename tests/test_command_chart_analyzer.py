@@ -185,19 +185,19 @@ def test_integrated_public_ok_kiwoom_ok_saves_layered_report(tmp_path, monkeypat
     assert "실시간 매수 제한 여부: 아니오" in text
 
 
-def test_integrated_public_ok_kiwoom_fail_keeps_public_report_with_realtime_limit(tmp_path, monkeypatch):
+def test_integrated_public_ok_kiwoom_fail_stops_without_normal_report(tmp_path, monkeypatch):
     monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
     monkeypatch.setattr(command_chart_analyzer, "is_korea_regular_session", lambda now=None: True)
     monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
 
     output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=MockProvider(fail=True))
     report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
+    qa_report = tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md"
 
-    assert "분석 완료" in output
-    text = report.read_text(encoding="utf-8")
-    assert "키움 실시간 데이터 미확인으로 장중 매수 지시는 제한합니다." in text
-    assert "실시간 매수 제한 여부: 예" in text
-    assert "최종 판정: 조건부로 사라" not in text
+    assert "분석 중단" in output
+    assert not report.exists()
+    assert qa_report.exists()
+    assert "키움 현재가 수집 실패" in qa_report.read_text(encoding="utf-8")
 
 
 def test_integrated_public_fail_kiwoom_ok_blocks_kiwoom_only_report(tmp_path, monkeypatch):
@@ -220,30 +220,32 @@ def test_integrated_public_fail_kiwoom_fail_stops(tmp_path, monkeypatch):
     assert (tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md").exists()
 
 
-def test_integrated_quote_missing_timestamp_marks_realtime_failed(tmp_path, monkeypatch):
+def test_integrated_quote_missing_timestamp_stops_without_normal_report(tmp_path, monkeypatch):
     monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
     monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
 
     output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=MissingTimestampProvider())
     report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
+    qa_report = tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md"
 
-    assert "분석 완료" in output
-    text = report.read_text(encoding="utf-8")
-    assert "timestamp" in text
-    assert "실시간 매수 제한 여부: 예" in text
+    assert "분석 중단" in output
+    assert not report.exists()
+    assert qa_report.exists()
+    assert "timestamp" in qa_report.read_text(encoding="utf-8")
 
 
-def test_integrated_short_minutes_marks_realtime_failed(tmp_path, monkeypatch):
+def test_integrated_short_minutes_stops_without_normal_report(tmp_path, monkeypatch):
     monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
     monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
 
     output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=ShortMinuteProvider())
     report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
+    qa_report = tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md"
 
-    assert "분석 완료" in output
-    text = report.read_text(encoding="utf-8")
-    assert "키움 체결 데이터 부족 또는 분봉 생성 실패" in text
-    assert "실시간 매수 제한 여부: 예" in text
+    assert "분석 중단" in output
+    assert not report.exists()
+    assert qa_report.exists()
+    assert "키움 체결 데이터 부족 또는 분봉 생성 실패" in qa_report.read_text(encoding="utf-8")
 
 
 def test_realtime_limited_positive_buy_is_qa_failure():
