@@ -97,6 +97,7 @@ exit /b 1
 
 :kiwoom_login_ready
 echo [kiwoom] Kiwoom login is ready. Realtime correction will be attempted.
+".venv\Scripts\python.exe" -B kiwoom_bridge_status.py
 
 :kiwoom_bridge_checked
 

@@ -721,6 +721,37 @@ class KiwoomController(QObject):
             })
         return sorted(candles, key=lambda item: item.get('date') or '')
 
+    def minute_candles(self, code: str, interval: int = 1, limit: int = 240) -> List[Dict[str, Any]]:
+        normalized_code = clean_code(code)
+        minute_interval = max(1, min(int(interval or 1), 60))
+        fields = ['체결시간', '시가', '고가', '저가', '현재가', '거래량']
+        rows = self._request_tr(
+            f'minute_candles_{normalized_code}_{minute_interval}',
+            'opt10080',
+            {'종목코드': normalized_code, '틱범위': str(minute_interval), '수정주가구분': '1'},
+            fields,
+        )
+        candles: List[Dict[str, Any]] = []
+        for row in rows[:max(1, int(limit or 240))]:
+            time_text = str(row.get('체결시간') or '').strip()
+            if len(time_text) >= 12:
+                dt_text = f'{time_text[:4]}-{time_text[4:6]}-{time_text[6:8]}T{time_text[8:10]}:{time_text[10:12]}:00+09:00'
+            else:
+                dt_text = time_text
+            close_price = to_int(row.get('현재가'))
+            volume = to_int(row.get('거래량'))
+            candles.append({
+                'datetime': dt_text,
+                'open': to_int(row.get('시가')),
+                'high': to_int(row.get('고가')),
+                'low': to_int(row.get('저가')),
+                'close': close_price,
+                'volume': volume,
+                'trade_value': close_price * volume,
+                'raw': row,
+            })
+        return sorted(candles, key=lambda item: item.get('datetime') or '')
+
     def screener(self, lookback_days: int, threshold_rate: float, threshold_amount_eok: float, max_codes: int, sector: str, sort: str) -> Dict[str, Any]:
         if not self.login:
             return {'ok': False, 'error': 'Kiwoom login required'}
@@ -1163,6 +1194,26 @@ def daily_detail_rank(limit: int = 50, maxCodes: int = 120, date: str = '') -> D
 def stock_detail(code: str, candleDays: int = 80) -> Dict[str, Any]:
     normalized_code = clean_code(code)
     return run_controller_call(lambda: controller.stock_detail(normalized_code, max(20, min(int(candleDays or 80), 160))), 90)
+
+
+@api.get('/candles/minute')
+def minute_candles(code: str, interval: int = 1, limit: int = 240) -> Dict[str, Any]:
+    normalized_code = clean_code(code)
+    return run_controller_call(
+        lambda: {
+            'ok': True,
+            'provider': 'Kiwoom OpenAPI+ opt10080',
+            'updatedAt': now_iso(),
+            'code': normalized_code,
+            'interval': max(1, min(int(interval or 1), 60)),
+            'candles': controller.minute_candles(
+                normalized_code,
+                max(1, min(int(interval or 1), 60)),
+                max(20, min(int(limit or 240), 900)),
+            ),
+        },
+        90,
+    )
 
 
 @api.get('/candles/{code}')

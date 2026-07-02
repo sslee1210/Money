@@ -50,6 +50,14 @@ def test_quote_falls_back_to_millionaire_stock_endpoint(monkeypatch):
     assert calls == ["http://127.0.0.1:8765/quote", "http://127.0.0.1:8765/stock/005930"]
 
 
+def test_client_defaults_to_local_bridge_url(monkeypatch):
+    monkeypatch.delenv("KIWOOM_BRIDGE_URL", raising=False)
+
+    client = KiwoomBridgeClient()
+
+    assert client.base_url == "http://127.0.0.1:8765"
+
+
 def test_quote_falls_back_when_bridge_returns_error_payload(monkeypatch):
     calls: list[str] = []
 
