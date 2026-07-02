@@ -60,7 +60,7 @@ class KiwoomBridgeClient:
     def get_quote(self, code: str) -> dict[str, Any]:
         try:
             return dict(self._get("/quote", {"code": code}))
-        except requests.RequestException:
+        except (requests.RequestException, KiwoomConnectionError):
             payload = self._get(f"/stock/{code}", {"candleDays": 80})
             if isinstance(payload, dict) and isinstance(payload.get("stock"), dict):
                 stock = dict(payload["stock"])
@@ -81,7 +81,7 @@ class KiwoomBridgeClient:
     def get_daily_candles(self, code: str, limit: int = 400) -> list[dict[str, Any]]:
         try:
             payload = self._get("/candles/daily", {"code": code, "limit": limit})
-        except requests.RequestException:
+        except (requests.RequestException, KiwoomConnectionError):
             payload = self._get(f"/candles/{code}", {"days": limit})
         return list(payload if isinstance(payload, list) else payload.get("candles", []))
 

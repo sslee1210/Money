@@ -36,6 +36,13 @@ if errorlevel 1 (
 
 cd /d "%BRIDGE_DIR%"
 
+if exist "%BRIDGE_PYTHON%" if not exist "%BRIDGE_VENV%\pyvenv.cfg" (
+    echo [setup] Incomplete bridge virtual environment detected.
+    echo [setup] Using repair runtime instead of the partial environment.
+    set "BRIDGE_VENV=%BRIDGE_DIR%\.venv32_runtime_repair"
+    set "BRIDGE_PYTHON=%BRIDGE_VENV%\Scripts\python.exe"
+)
+
 if not exist "%BRIDGE_PYTHON%" (
     echo [setup] Creating 32-bit bridge virtual environment...
     %PYTHON_CMD% -m venv "%BRIDGE_VENV%"
