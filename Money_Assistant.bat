@@ -50,11 +50,32 @@ if errorlevel 1 (
 echo [kiwoom] Checking local bridge connection...
 ".venv\Scripts\python.exe" -B -c "import os,socket,urllib.parse; u=urllib.parse.urlparse(os.environ.get('KIWOOM_BRIDGE_URL','')); host=u.hostname or '127.0.0.1'; port=u.port or 80; s=socket.create_connection((host,port),timeout=1.5); s.close()" >nul 2>nul
 if errorlevel 1 (
-    echo [kiwoom] Local bridge is not reachable. Integrated analysis will keep public-data analysis and limit intraday buy instructions.
-    echo [kiwoom] Start your Kiwoom bridge first if you want realtime quote/minute correction.
+    echo [kiwoom] Local bridge is not reachable. Trying to start existing Kiwoom bridge...
+    set "KIWOOM_BRIDGE_BAT=%USERPROFILE%\Desktop\millionaire\start-bridge.bat"
+    if exist "%KIWOOM_BRIDGE_BAT%" (
+        echo [kiwoom] Starting: %KIWOOM_BRIDGE_BAT%
+        start "Kiwoom Bridge" "%KIWOOM_BRIDGE_BAT%"
+        echo [kiwoom] Waiting for bridge. Complete the Kiwoom login window if it appears.
+        for /l %%i in (1,1,30) do (
+            ".venv\Scripts\python.exe" -B -c "import os,socket,urllib.parse; u=urllib.parse.urlparse(os.environ.get('KIWOOM_BRIDGE_URL','')); host=u.hostname or '127.0.0.1'; port=u.port or 80; s=socket.create_connection((host,port),timeout=1.0); s.close()" >nul 2>nul
+            if not errorlevel 1 goto kiwoom_bridge_ready
+            timeout /t 2 /nobreak >nul
+        )
+        echo [kiwoom] Bridge did not become reachable yet. Integrated analysis will keep public-data analysis and limit intraday buy instructions.
+        echo [kiwoom] Keep the bridge window open and finish login, then run analysis again.
+    ) else (
+        echo [kiwoom] Existing bridge launcher not found: %KIWOOM_BRIDGE_BAT%
+        echo [kiwoom] Integrated analysis will keep public-data analysis and limit intraday buy instructions.
+    )
 ) else (
-    echo [kiwoom] Local bridge is reachable. Realtime correction will be attempted.
+    goto kiwoom_bridge_ready
 )
+goto kiwoom_bridge_checked
+
+:kiwoom_bridge_ready
+echo [kiwoom] Local bridge is reachable. Realtime correction will be attempted.
+
+:kiwoom_bridge_checked
 
 echo.
 echo [run] Type a request at the Money prompt.

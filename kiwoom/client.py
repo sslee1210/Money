@@ -58,7 +58,17 @@ class KiwoomBridgeClient:
         return payload
 
     def get_quote(self, code: str) -> dict[str, Any]:
-        return dict(self._get("/quote", {"code": code}))
+        try:
+            return dict(self._get("/quote", {"code": code}))
+        except requests.RequestException:
+            payload = self._get(f"/stock/{code}", {"candleDays": 80})
+            if isinstance(payload, dict) and isinstance(payload.get("stock"), dict):
+                stock = dict(payload["stock"])
+                stock.setdefault("timestamp", payload.get("updatedAt") or stock.get("updatedAt"))
+                if stock.get("tradeAmountMillion") is not None and stock.get("trade_value") is None:
+                    stock["trade_value"] = _to_number(stock.get("tradeAmountMillion")) * 1_000_000
+                return stock
+            raise
 
     def get_ticks(self, code: str, limit: int = 600) -> list[dict[str, Any]]:
         payload = self._get("/ticks", {"code": code, "limit": limit})
@@ -69,6 +79,15 @@ class KiwoomBridgeClient:
         return list(payload if isinstance(payload, list) else payload.get("candles", []))
 
     def get_daily_candles(self, code: str, limit: int = 400) -> list[dict[str, Any]]:
-        payload = self._get("/candles/daily", {"code": code, "limit": limit})
+        try:
+            payload = self._get("/candles/daily", {"code": code, "limit": limit})
+        except requests.RequestException:
+            payload = self._get(f"/candles/{code}", {"days": limit})
         return list(payload if isinstance(payload, list) else payload.get("candles", []))
 
+
+def _to_number(value: Any) -> float:
+    try:
+        return float(str(value).replace(",", ""))
+    except Exception:
+        return 0.0
