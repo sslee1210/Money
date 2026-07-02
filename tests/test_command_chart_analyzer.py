@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -63,6 +63,8 @@ class MockProvider(KiwoomDataProvider):
             volume=123456,
             trade_value=6700000000,
             timestamp=datetime(2026, 6, 30, 10, 0),
+            source_label="키움현재가TR",
+            is_current_tr=True,
         )
 
     def get_intraday_ohlcv(self, code: str, interval_minutes: int = 1, limit: int = 600) -> pd.DataFrame:
@@ -111,6 +113,18 @@ class ShortMinuteProvider(MockProvider):
         return _minute_frame(5)
 
 
+def _report_path(base: Path, name: str = "삼성전자", code: str = "005930") -> Path:
+    return base / f"{name}_{code}" / f"[{name}, {code}] 분석 보고서.md"
+
+
+def _html_report_path(base: Path, name: str = "삼성전자", code: str = "005930") -> Path:
+    return base / f"{name}_{code}" / f"[{name}, {code}] 분석 보고서.html"
+
+
+def _qa_report_path(base: Path, name: str = "삼성전자", code: str = "005930") -> Path:
+    return base / f"{name}_{code}" / f"[{name}, {code}] 분석 실패 보고서.md"
+
+
 def test_command_chart_analyzer_imports():
     assert callable(command_chart_analyzer.analyze_command_chart)
 
@@ -149,11 +163,10 @@ def test_invalid_data_writes_only_qa_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
     monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
     output = command_chart_analyzer.analyze_command_chart("005930", "삼성전자", provider=MockProvider(fail=True))
-    out_dir = tmp_path / "삼성전자_005930"
     assert "분석 중단" in output
-    assert (out_dir / "삼성전자_005930_보고서_QA실패.md").exists()
-    assert not (out_dir / "삼성전자_005930_조건부명령형_차트분석.md").exists()
-    assert not (out_dir / "삼성전자_005930_조건부명령형_차트분석.html").exists()
+    assert (_qa_report_path(tmp_path)).exists()
+    assert not (_report_path(tmp_path)).exists()
+    assert not (_html_report_path(tmp_path)).exists()
 
 
 def test_success_report_includes_sse_indicator_section(tmp_path, monkeypatch):
@@ -161,9 +174,12 @@ def test_success_report_includes_sse_indicator_section(tmp_path, monkeypatch):
     monkeypatch.setattr(command_chart_analyzer, "is_korea_regular_session", lambda now=None: False)
     monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
     output = command_chart_analyzer.analyze_command_chart("005930", "삼성전자", provider=MockProvider())
-    report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
+    report = _report_path(tmp_path)
     assert "분석 완료" in output
     text = report.read_text(encoding="utf-8")
+    assert "# [삼성전자, 005930] 분석 보고서" in text
+    assert "장마감 기준가:" in text
+    assert "가격 기준:" in text
     assert "## SSE Indicator 분석" in text
     assert "SSE 기준선" in text
     assert "SSE 최종 판정" in text
@@ -176,12 +192,12 @@ def test_integrated_public_ok_kiwoom_ok_saves_layered_report(tmp_path, monkeypat
     monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
 
     output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=MockProvider())
-    report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
+    report = _report_path(tmp_path)
 
     assert "분석 완료" in output
     text = report.read_text(encoding="utf-8")
     assert "## 분석 레이어 상태" in text
-    assert "키움 실시간 보정:" in text
+    assert "키움 장마감 TR 보정:" in text
     assert "실시간 매수 제한 여부: 아니오" in text
 
 
@@ -191,8 +207,8 @@ def test_integrated_public_ok_kiwoom_fail_stops_without_normal_report(tmp_path, 
     monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
 
     output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=MockProvider(fail=True))
-    report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
-    qa_report = tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md"
+    report = _report_path(tmp_path)
+    qa_report = _qa_report_path(tmp_path)
 
     assert "분석 중단" in output
     assert not report.exists()
@@ -207,7 +223,7 @@ def test_integrated_public_fail_kiwoom_ok_blocks_kiwoom_only_report(tmp_path, mo
     output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=MockProvider())
 
     assert "분석 중단" in output
-    assert (tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md").exists()
+    assert (_qa_report_path(tmp_path)).exists()
 
 
 def test_integrated_public_fail_kiwoom_fail_stops(tmp_path, monkeypatch):
@@ -217,7 +233,7 @@ def test_integrated_public_fail_kiwoom_fail_stops(tmp_path, monkeypatch):
     output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=MockProvider(fail=True))
 
     assert "분석 중단" in output
-    assert (tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md").exists()
+    assert (_qa_report_path(tmp_path)).exists()
 
 
 def test_integrated_quote_missing_timestamp_stops_without_normal_report(tmp_path, monkeypatch):
@@ -225,8 +241,8 @@ def test_integrated_quote_missing_timestamp_stops_without_normal_report(tmp_path
     monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
 
     output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=MissingTimestampProvider())
-    report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
-    qa_report = tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md"
+    report = _report_path(tmp_path)
+    qa_report = _qa_report_path(tmp_path)
 
     assert "분석 중단" in output
     assert not report.exists()
@@ -239,8 +255,8 @@ def test_integrated_short_minutes_stops_without_normal_report(tmp_path, monkeypa
     monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
 
     output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=ShortMinuteProvider())
-    report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
-    qa_report = tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md"
+    report = _report_path(tmp_path)
+    qa_report = _qa_report_path(tmp_path)
 
     assert "분석 중단" in output
     assert not report.exists()
@@ -277,7 +293,7 @@ def test_quote_prev_close_mismatch_stops_normal_report(tmp_path, monkeypatch):
     monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
     output = command_chart_analyzer.analyze_command_chart("005930", "삼성전자", provider=BadQuoteProvider())
     assert "분석 중단" in output
-    assert (tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md").exists()
+    assert (_qa_report_path(tmp_path)).exists()
 
 
 def test_intraday_breakout_never_uses_confirmed_word():

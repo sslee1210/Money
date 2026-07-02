@@ -56,6 +56,14 @@ class DailyData:
     public_reference_close: float | None = None
 
 
+@dataclass(frozen=True)
+class PriceSourceInfo:
+    label: str
+    status_name: str
+    note: str
+    is_realtime: bool
+
+
 def finite(value: Any) -> float | None:
     try:
         out = float(value)
@@ -276,10 +284,16 @@ def analyze_command_chart(
         )
         kiwoom_errors.extend(quote_errors)
         kiwoom_warnings.extend(quote_warnings)
+        price_source = _price_source_info(quote, session_intraday)
+        if price_source.note:
+            kiwoom_warnings.append(price_source.note)
         if quote_warnings:
             daily_data = replace(daily_data, validation_note=f"{daily_data.validation_note}; {'; '.join(quote_warnings)}")
     elif not require_kiwoom:
+        price_source = PriceSourceInfo("공개 데이터 기준가", "키움 가격 보정", "키움 가격 데이터 없음", False)
         kiwoom_warnings.append("키움 실시간 데이터 미확인으로 장중 매수 지시는 제한합니다. 공개 데이터 기준 큰 그림만 참고하십시오.")
+    else:
+        price_source = PriceSourceInfo("가격 기준", "키움 가격 보정", "키움 가격 데이터 없음", False)
 
     try:
         daily_ind = calculate_standard_indicators(daily_data.frame)
@@ -328,7 +342,7 @@ def analyze_command_chart(
         return _stop_and_write_failure(safe_name, code, sse_errors)
 
     public_status = LayerStatus("공개 데이터 분석", ok=not public_errors, warnings=tuple(public_warnings), blocking_errors=tuple(public_errors))
-    kiwoom_status = LayerStatus("키움 실시간 보정", ok=not kiwoom_errors and quote is not None, warnings=tuple(kiwoom_warnings), blocking_errors=tuple(kiwoom_errors))
+    kiwoom_status = LayerStatus(price_source.status_name, ok=not kiwoom_errors and quote is not None, warnings=tuple(kiwoom_warnings), blocking_errors=tuple(kiwoom_errors))
     sse_status = LayerStatus("SSE Indicator", ok=not sse_errors, warnings=tuple(sse_warnings), blocking_errors=tuple(sse_errors))
 
     levels = build_decision_levels(current_price, daily_ind, minute3_ind, minute5_ind)
@@ -363,7 +377,7 @@ def analyze_command_chart(
     if decision.stopped:
         return _stop_and_write_failure(safe_name, code, list(decision.blocking_errors))
 
-    report = render_report(safe_name, code, current_price, session_intraday, daily_data, decision, sse_result if sse_status.ok else None, pipeline)
+    report = render_report(safe_name, code, current_price, session_intraday, daily_data, decision, sse_result if sse_status.ok else None, pipeline, price_source)
     qa_errors = validate_command_report(
         report,
         decision,
@@ -377,14 +391,13 @@ def analyze_command_chart(
     if qa_errors:
         return _stop_and_write_failure(safe_name, code, qa_errors)
 
-    md_path = out_dir / f"{safe_name}_{code}_조건부명령형_차트분석.md"
-    html_path = out_dir / f"{safe_name}_{code}_조건부명령형_차트분석.html"
-    qa_path = out_dir / f"{safe_name}_{code}_보고서_QA실패.md"
+    md_path, html_path, qa_path = _report_paths(out_dir, safe_name, code)
+    _remove_legacy_reports(out_dir, safe_name, code)
     qa_path.unlink(missing_ok=True)
     md_path.write_text(report, encoding="utf-8")
-    html_path.write_text(html_from_markdown(report, f"{safe_name} {code} 조건부 명령형 차트 분석"), encoding="utf-8")
+    html_path.write_text(html_from_markdown(report, f"[{safe_name}, {code}] 분석 보고서"), encoding="utf-8")
 
-    return _console_summary(safe_name, code, current_price, decision, md_path)
+    return _console_summary(safe_name, code, current_price, decision, md_path, price_source)
 
 
 def build_decision_levels(current_price: int, daily_ind: pd.DataFrame, minute3_ind: pd.DataFrame, minute5_ind: pd.DataFrame) -> DecisionLevels:
@@ -599,8 +612,10 @@ def render_report(
     decision: DecisionResult,
     sse_result: SSEResult | None = None,
     pipeline: IntegratedAnalysisResult | None = None,
+    price_source: PriceSourceInfo | None = None,
 ) -> str:
     session_text = "장중" if is_intraday else "장마감 이후"
+    price_source = price_source or PriceSourceInfo("현재가", "키움 가격 보정", "", False)
     evidence = "\n".join(f"* {item.summary()}" for item in decision.price_evidence)
     actions = "\n".join(f"* {line}" for line in decision.actions)
     buy = "\n".join(f"* {line}" for line in decision.buy_conditions)
@@ -609,13 +624,14 @@ def render_report(
     holder = "\n".join(f"* {line}" for line in decision.holder_conditions)
     sse_section = render_sse_section(sse_result) if sse_result is not None else ""
     pipeline_section = render_pipeline_section(pipeline) if pipeline is not None else ""
-    return f"""# {stock_name} {code} 조건부 명령형 차트 분석
+    return f"""# [{stock_name}, {code}] 분석 보고서
 
 [최종 매매 지시]
 
 최종 판정: {decision.verdict}
-현재가: {format_price(current_price)}
+{price_source.label}: {format_price(current_price)}
 분석 구분: {session_text}
+가격 기준: {price_source.note or price_source.status_name}
 
 지금 할 행동:
 
@@ -671,7 +687,7 @@ def render_pipeline_section(pipeline: IntegratedAnalysisResult) -> str:
 - 경고: {_join_status_items(pipeline.public_status.warnings)}
 - 차단 오류: {_join_status_items(pipeline.public_status.blocking_errors)}
 
-키움 실시간 보정:
+{pipeline.kiwoom_status.name}:
 - 상태: {_status_text(pipeline.kiwoom_status)}
 - 경고: {_join_status_items(pipeline.kiwoom_status.warnings)}
 - 차단 오류: {_join_status_items(pipeline.kiwoom_status.blocking_errors)}
@@ -700,13 +716,12 @@ def _stop_and_write_failure(stock_name: str, code: str, reasons: list[str]) -> s
     safe_name = sanitize_filename(stock_name or code)
     out_dir = REPORTS_DIR / f"{safe_name}_{code}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    md_path = out_dir / f"{safe_name}_{code}_조건부명령형_차트분석.md"
-    html_path = out_dir / f"{safe_name}_{code}_조건부명령형_차트분석.html"
-    qa_path = out_dir / f"{safe_name}_{code}_보고서_QA실패.md"
+    md_path, html_path, qa_path = _report_paths(out_dir, safe_name, code)
+    _remove_legacy_reports(out_dir, safe_name, code)
     md_path.unlink(missing_ok=True)
     html_path.unlink(missing_ok=True)
     body = "\n".join(f"- {reason}" for reason in reasons) if reasons else "- 원인 미상"
-    qa_path.write_text(f"# {safe_name} {code} 조건부 명령형 차트 분석 QA 실패\n\n최종판정: 분석 중단\n\n## 실패 사유\n\n{body}\n", encoding="utf-8")
+    qa_path.write_text(f"# [{safe_name}, {code}] 분석 실패 보고서\n\n최종판정: 분석 중단\n\n## 실패 사유\n\n{body}\n", encoding="utf-8")
     return f"""[조건부 명령형 차트 분석 중단]
 
 종목: {safe_name} {code}
@@ -714,14 +729,46 @@ def _stop_and_write_failure(stock_name: str, code: str, reasons: list[str]) -> s
 QA 실패 파일: {qa_path}"""
 
 
-def _console_summary(stock_name: str, code: str, current_price: int, decision: DecisionResult, md_path: Any) -> str:
+def _console_summary(stock_name: str, code: str, current_price: int, decision: DecisionResult, md_path: Any, price_source: PriceSourceInfo | None = None) -> str:
+    price_source = price_source or PriceSourceInfo("현재가", "키움 가격 보정", "", False)
     return f"""[조건부 명령형 차트 분석 완료]
 
 종목: {stock_name} {code}
-현재가: {format_price(current_price)}
+{price_source.label}: {format_price(current_price)}
 최종 판정: {decision.verdict}
 지금 할 행동: {' '.join(decision.actions)}
 보고서 경로: {md_path}"""
+
+
+def _report_paths(out_dir: Any, safe_name: str, code: str) -> tuple[Any, Any, Any]:
+    return (
+        out_dir / f"[{safe_name}, {code}] 분석 보고서.md",
+        out_dir / f"[{safe_name}, {code}] 분석 보고서.html",
+        out_dir / f"[{safe_name}, {code}] 분석 실패 보고서.md",
+    )
+
+
+def _remove_legacy_reports(out_dir: Any, safe_name: str, code: str) -> None:
+    for path in (
+        out_dir / f"{safe_name}_{code}_조건부명령형_차트분석.md",
+        out_dir / f"{safe_name}_{code}_조건부명령형_차트분석.html",
+        out_dir / f"{safe_name}_{code}_보고서_QA실패.md",
+    ):
+        path.unlink(missing_ok=True)
+
+
+def _price_source_info(quote: Any, is_intraday: bool) -> PriceSourceInfo:
+    source_label = getattr(quote, "source_label", None) or getattr(quote, "source", None) or "키움"
+    quote_time = getattr(quote, "quote_time", None)
+    is_realtime = bool(getattr(quote, "is_realtime", False))
+    is_current_tr = bool(getattr(quote, "is_current_tr", False))
+    if is_realtime and quote_time:
+        return PriceSourceInfo("실시간 현재가", "키움 실시간 체결 보정", f"키움 실시간 체결 FID 기준({source_label}, 체결시간 {quote_time})", True)
+    if is_intraday:
+        return PriceSourceInfo("키움 TR 기준가", "키움 장중 TR 보정", f"실시간 체결 FID가 아니라 키움 TR 기준가입니다({source_label}). 장중 실시간 호가/체결 화면과 차이가 날 수 있습니다.", False)
+    if is_current_tr:
+        return PriceSourceInfo("장마감 기준가", "키움 장마감 TR 보정", f"장마감 이후 키움 TR/완료 일봉 기준가입니다({source_label}). 시간외·관심화면 가격과 다를 수 있습니다.", False)
+    return PriceSourceInfo("키움 기준가", "키움 가격 보정", f"키움 가격 데이터 기준입니다({source_label}).", False)
 
 
 def analyze_integrated_chart(

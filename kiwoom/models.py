@@ -16,6 +16,11 @@ class Quote:
     volume: float | None = None
     trade_value: float | None = None
     timestamp: datetime | None = None
+    source: str | None = None
+    source_label: str | None = None
+    is_realtime: bool = False
+    is_current_tr: bool = False
+    quote_time: str | None = None
 
 
 @dataclass(frozen=True)

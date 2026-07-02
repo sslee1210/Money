@@ -210,7 +210,7 @@ def run_text(text: str) -> str:
 def repl() -> int:
     print("Money 분석 프롬프트")
     print("예: 삼성전자 분석해줘 / 005930 삼성전자 분석해줘")
-    print("키움 로그인 완료 후 공개 데이터 + 키움 실시간 보정 + SSE 통합 보고서 1개로 생성됩니다.")
+    print("키움 로그인 완료 후 공개 데이터 + 키움 가격/분봉 보정 + SSE 통합 보고서 1개로 생성됩니다.")
     print("종료: exit 또는 quit")
     while True:
         try:

@@ -46,6 +46,11 @@ class KiwoomDataProvider:
             volume=_number(raw.get("volume", raw.get("거래량"))),
             trade_value=_number(raw.get("trade_value", raw.get("거래대금"))),
             timestamp=timestamp,
+            source=str(raw.get("source") or "") or None,
+            source_label=str(raw.get("sourceLabel") or raw.get("source_label") or "") or None,
+            is_realtime=bool(raw.get("isRealtime") or raw.get("is_realtime")),
+            is_current_tr=bool(raw.get("isCurrentTr") or raw.get("is_current_tr")),
+            quote_time=str(raw.get("time") or raw.get("quote_time") or "") or None,
         )
 
     def get_ticks(self, code: str, limit: int = 600) -> list[Tick]:

@@ -86,8 +86,8 @@ python command_chart_analyzer.py 000660 SK하이닉스
 보고서는 아래 경로에 저장된다.
 
 ```text
-reports/{종목명}_{코드}/{종목명}_{코드}_조건부명령형_차트분석.md
-reports/{종목명}_{코드}/{종목명}_{코드}_조건부명령형_차트분석.html
+reports/{종목명}_{코드}/[{종목명}, {코드}] 분석 보고서.md
+reports/{종목명}_{코드}/[{종목명}, {코드}] 분석 보고서.html
 ```
 
 ## 현재 키움 Provider 구조

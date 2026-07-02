@@ -67,7 +67,7 @@ def run_integrated_analysis_pipeline(
     final_verdict = decision_verdict
     reason_parts: list[str] = ["공개 데이터 분석을 기본 판단으로 사용했습니다."]
     if kiwoom_status.ok:
-        reason_parts.append("키움 현재가와 분봉 검증을 통과해 실시간 보정을 반영했습니다.")
+        reason_parts.append(f"{kiwoom_status.name} 검증을 통과해 가격과 분봉 데이터를 반영했습니다.")
     else:
         reason_parts.append("키움 실시간 데이터 미확인으로 장중 매수 지시는 제한합니다.")
 
