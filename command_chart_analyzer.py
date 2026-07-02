@@ -33,6 +33,7 @@ from analyze_stock import (
     today_kst,
     validation_labels,
 )
+from core.analysis_pipeline import IntegratedAnalysisResult, LayerStatus, run_integrated_analysis_pipeline
 from core.decision_engine import DecisionContext, DecisionLevels, DecisionResult, PriceEvidence, evaluate_decision, format_price
 from core.indicators import calculate_standard_indicators, daily_indicators_valid, intraday_indicators_valid
 from core.qa import validate_command_report
@@ -215,13 +216,21 @@ def analyze_command_chart(
     fallback_name: str | None = None,
     provider: KiwoomDataProvider | None = None,
     now: datetime | None = None,
+    *,
+    require_kiwoom: bool = True,
+    sse_required: bool = True,
 ) -> str:
     code = code.strip()
     if not (code.isdigit() and len(code) == 6):
         code = code.upper()
 
     provider = provider or KiwoomDataProvider()
-    invalid_reasons: list[str] = []
+    public_errors: list[str] = []
+    public_warnings: list[str] = []
+    kiwoom_errors: list[str] = []
+    kiwoom_warnings: list[str] = []
+    sse_errors: list[str] = []
+    sse_warnings: list[str] = []
     daily_data: DailyData | None = None
     quote = None
     minute3 = pd.DataFrame()
@@ -232,56 +241,73 @@ def analyze_command_chart(
         daily_data = collect_daily_data(code, fallback_name, provider)
         safe_name = sanitize_filename(daily_data.stock_name)
     except Exception as exc:
-        invalid_reasons.append(f"대표가격 산정 불가: {exc}")
+        public_errors.append(f"대표가격 산정 불가: {exc}")
 
     try:
         quote = provider.get_quote(code)
     except Exception as exc:
-        invalid_reasons.append(f"키움 현재가 수집 실패: {exc}")
+        kiwoom_errors.append(f"키움 현재가 수집 실패: {exc}")
 
     try:
         minute3 = provider.get_intraday_ohlcv(code, interval_minutes=3)
         minute5 = provider.get_intraday_ohlcv(code, interval_minutes=5)
         if len(minute3) < 20 or len(minute5) < 20:
-            invalid_reasons.append("키움 체결 데이터 부족 또는 분봉 생성 실패")
+            kiwoom_errors.append("키움 체결 데이터 부족 또는 분봉 생성 실패")
     except Exception as exc:
-        invalid_reasons.append(f"분봉 생성 실패: {exc}")
+        kiwoom_errors.append(f"분봉 생성 실패: {exc}")
 
     session_intraday = is_korea_regular_session(now)
-    if daily_data is None or quote is None:
-        return _stop_and_write_failure(safe_name, code, invalid_reasons or ["장중/장외 상태 판정 실패"])
+    if daily_data is None:
+        return _stop_and_write_failure(safe_name, code, public_errors or ["대표가격 산정 불가"])
+    if quote is None and require_kiwoom:
+        return _stop_and_write_failure(safe_name, code, kiwoom_errors or ["키움 현재가 수집 실패"])
 
     out_dir = REPORTS_DIR / f"{safe_name}_{code}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    current_price = safe_round(quote.price) or 0
-    quote_errors, quote_warnings = _validate_quote(
-        quote,
-        daily_data.public_reference_close,
-        current_price,
-        is_intraday=session_intraday,
-        now=now,
-    )
-    invalid_reasons.extend(quote_errors)
-    if quote_warnings:
-        daily_data = replace(daily_data, validation_note=f"{daily_data.validation_note}; {'; '.join(quote_warnings)}")
+    public_close = finite(daily_data.frame.iloc[-1].get("Close")) if not daily_data.frame.empty else None
+    current_price = safe_round(getattr(quote, "price", None)) or safe_round(public_close) or 0
+    if quote is not None:
+        quote_errors, quote_warnings = _validate_quote(
+            quote,
+            daily_data.public_reference_close,
+            current_price,
+            is_intraday=session_intraday,
+            now=now,
+        )
+        kiwoom_errors.extend(quote_errors)
+        kiwoom_warnings.extend(quote_warnings)
+        if quote_warnings:
+            daily_data = replace(daily_data, validation_note=f"{daily_data.validation_note}; {'; '.join(quote_warnings)}")
+    elif not require_kiwoom:
+        kiwoom_warnings.append("키움 실시간 데이터 미확인으로 장중 매수 지시는 제한합니다. 공개 데이터 기준 큰 그림만 참고하십시오.")
 
     try:
         daily_ind = calculate_standard_indicators(daily_data.frame)
+    except Exception as exc:
+        return _stop_and_write_failure(safe_name, code, public_errors + [f"필수 지표 계산 실패: {exc}"])
+
+    if not daily_indicators_valid(daily_ind):
+        public_errors.append("일봉 필수 지표 계산 실패")
+    if daily_data.reliability == "낮음" or daily_data.stop_precision:
+        public_errors.append(f"데이터 신뢰도 낮음: {daily_data.validation_note}")
+
+    if minute3.empty or minute5.empty:
+        minute3 = _daily_frame_as_minute_fallback(daily_data.frame, "3min")
+        minute5 = _daily_frame_as_minute_fallback(daily_data.frame, "5min")
+    try:
         minute3_ind = calculate_standard_indicators(minute3)
         minute5_ind = calculate_standard_indicators(minute5)
     except Exception as exc:
-        return _stop_and_write_failure(safe_name, code, invalid_reasons + [f"필수 지표 계산 실패: {exc}"])
+        minute3_ind = calculate_standard_indicators(_daily_frame_as_minute_fallback(daily_data.frame, "3min"))
+        minute5_ind = calculate_standard_indicators(_daily_frame_as_minute_fallback(daily_data.frame, "5min"))
+        kiwoom_errors.append(f"분봉 필수 지표 계산 실패: {exc}")
 
-    if not daily_indicators_valid(daily_ind):
-        invalid_reasons.append("일봉 필수 지표 계산 실패")
-    if not intraday_indicators_valid(minute3_ind) or not intraday_indicators_valid(minute5_ind):
-        invalid_reasons.append("분봉 필수 지표 계산 실패")
-    if daily_data.reliability == "낮음" or daily_data.stop_precision:
-        invalid_reasons.append(f"데이터 신뢰도 낮음: {daily_data.validation_note}")
+    if quote is not None and (not intraday_indicators_valid(minute3_ind) or not intraday_indicators_valid(minute5_ind)):
+        kiwoom_errors.append("분봉 필수 지표 계산 실패")
 
     daily_close = finite(daily_ind.iloc[-1].get("Close"))
     if daily_close and current_price and abs(current_price - daily_close) / daily_close > 0.30:
-        invalid_reasons.append("키움 현재가와 일봉 대표 가격의 비정상 불일치")
+        kiwoom_errors.append("키움 현재가와 일봉 대표 가격의 비정상 불일치")
 
     sse_result = calculate_sse_indicator(
         daily_ind,
@@ -291,7 +317,19 @@ def analyze_command_chart(
         is_intraday=session_intraday,
     )
     if sse_result.blocking_errors:
-        invalid_reasons.extend(sse_result.blocking_errors)
+        sse_errors.extend(sse_result.blocking_errors)
+    sse_warnings.extend(sse_result.warnings)
+
+    if require_kiwoom and kiwoom_errors:
+        return _stop_and_write_failure(safe_name, code, kiwoom_errors)
+    if public_errors:
+        return _stop_and_write_failure(safe_name, code, public_errors)
+    if sse_required and sse_errors:
+        return _stop_and_write_failure(safe_name, code, sse_errors)
+
+    public_status = LayerStatus("공개 데이터 분석", ok=not public_errors, warnings=tuple(public_warnings), blocking_errors=tuple(public_errors))
+    kiwoom_status = LayerStatus("키움 실시간 보정", ok=not kiwoom_errors and quote is not None, warnings=tuple(kiwoom_warnings), blocking_errors=tuple(kiwoom_errors))
+    sse_status = LayerStatus("SSE Indicator", ok=not sse_errors, warnings=tuple(sse_warnings), blocking_errors=tuple(sse_errors))
 
     levels = build_decision_levels(current_price, daily_ind, minute3_ind, minute5_ind)
     decision = evaluate_decision(
@@ -299,29 +337,42 @@ def analyze_command_chart(
             current_price=current_price,
             levels=levels,
             is_intraday=session_intraday,
-            data_valid=not invalid_reasons,
-            invalid_reasons=tuple(invalid_reasons),
+            data_valid=True,
+            invalid_reasons=(),
             volume_ratio20=last_valid(daily_ind.iloc[-1], "거래량비율20"),
             rsi14=last_valid(daily_ind.iloc[-1], "RSI14"),
             bollinger_upper=last_valid(daily_ind.iloc[-1], "BB상단"),
             risk_reward=_risk_reward(levels),
         )
     )
-    if not decision.stopped:
+    pipeline = run_integrated_analysis_pipeline(
+        public_status,
+        kiwoom_status,
+        sse_status,
+        decision.verdict,
+        sse_verdict=sse_result.verdict if sse_status.ok else None,
+        sse_required=sse_required,
+    )
+    if not decision.stopped and sse_status.ok:
         decision = apply_sse_safety_filter(decision, sse_result, current_price, session_intraday)
+    if pipeline.realtime_limited and decision.verdict in {"사라", "조건부로 사라"}:
+        decision = apply_realtime_limit(decision)
+    if decision.verdict != pipeline.final_verdict and pipeline.final_verdict in {"분석 중단", "팔아라", "사지 마라", "기다려라", "보유하라"}:
+        decision = replace(decision, verdict=pipeline.final_verdict, headline=f"{decision.headline}; {pipeline.final_reason}")
 
     if decision.stopped:
         return _stop_and_write_failure(safe_name, code, list(decision.blocking_errors))
 
-    report = render_report(safe_name, code, current_price, session_intraday, daily_data, decision, sse_result)
+    report = render_report(safe_name, code, current_price, session_intraday, daily_data, decision, sse_result if sse_status.ok else None, pipeline)
     qa_errors = validate_command_report(
         report,
         decision,
         levels,
         is_intraday=session_intraday,
-        data_valid=not invalid_reasons,
+        data_valid=True,
         current_price=current_price,
-        sse_result=sse_result,
+        sse_result=sse_result if sse_status.ok else None,
+        realtime_limited=pipeline.realtime_limited,
     )
     if qa_errors:
         return _stop_and_write_failure(safe_name, code, qa_errors)
@@ -473,6 +524,18 @@ def _sse_no_buy_text(sse_result: SSEResult) -> str:
     return f"SSE 추격 금지선 {format_price(levels.no_chase)} 이상 또는 RR1 {levels.rr1:.2f}배 미만이면 사지 마라."
 
 
+def apply_realtime_limit(decision: DecisionResult) -> DecisionResult:
+    limit_text = "키움 실시간 데이터 미확인으로 장중 매수 지시는 제한합니다. 공개 데이터 기준 큰 그림만 참고하십시오."
+    return replace(
+        decision,
+        verdict="기다려라",
+        headline=f"{decision.headline}; {limit_text}",
+        actions=(limit_text,) + decision.actions,
+        no_buy_conditions=decision.no_buy_conditions + (limit_text,),
+        final_action_state="WAIT_RECOVERY_CLOSE",
+    )
+
+
 def render_sse_section(sse_result: SSEResult) -> str:
     levels = sse_result.levels
     evidence_lines = "\n".join(
@@ -535,6 +598,7 @@ def render_report(
     daily_data: DailyData,
     decision: DecisionResult,
     sse_result: SSEResult | None = None,
+    pipeline: IntegratedAnalysisResult | None = None,
 ) -> str:
     session_text = "장중" if is_intraday else "장마감 이후"
     evidence = "\n".join(f"* {item.summary()}" for item in decision.price_evidence)
@@ -544,6 +608,7 @@ def render_report(
     sell = "\n".join(f"* {line}" for line in decision.sell_conditions)
     holder = "\n".join(f"* {line}" for line in decision.holder_conditions)
     sse_section = render_sse_section(sse_result) if sse_result is not None else ""
+    pipeline_section = render_pipeline_section(pipeline) if pipeline is not None else ""
     return f"""# {stock_name} {code} 조건부 명령형 차트 분석
 
 [최종 매매 지시]
@@ -584,6 +649,8 @@ def render_report(
 
 {sse_section}
 
+{pipeline_section}
+
 ## 내부 검증
 
 내부 검증: 통과
@@ -594,6 +661,39 @@ def render_report(
 수급 신뢰도: 낮음
 해석 완전성: 높음
 """
+
+
+def render_pipeline_section(pipeline: IntegratedAnalysisResult) -> str:
+    return f"""## 분석 레이어 상태
+
+공개 데이터 분석:
+- 상태: {_status_text(pipeline.public_status)}
+- 경고: {_join_status_items(pipeline.public_status.warnings)}
+- 차단 오류: {_join_status_items(pipeline.public_status.blocking_errors)}
+
+키움 실시간 보정:
+- 상태: {_status_text(pipeline.kiwoom_status)}
+- 경고: {_join_status_items(pipeline.kiwoom_status.warnings)}
+- 차단 오류: {_join_status_items(pipeline.kiwoom_status.blocking_errors)}
+
+SSE Indicator:
+- 상태: {_status_text(pipeline.sse_status)}
+- 경고: {_join_status_items(pipeline.sse_status.warnings)}
+- 차단 오류: {_join_status_items(pipeline.sse_status.blocking_errors)}
+
+최종 통합 판단:
+- 최종 판정: {pipeline.final_verdict}
+- 실시간 매수 제한 여부: {'예' if pipeline.realtime_limited else '아니오'}
+- 통합 사유: {pipeline.final_reason}
+"""
+
+
+def _status_text(status: LayerStatus) -> str:
+    return "정상" if status.ok else "제한"
+
+
+def _join_status_items(items: tuple[str, ...]) -> str:
+    return "없음" if not items else "; ".join(items)
 
 
 def _stop_and_write_failure(stock_name: str, code: str, reasons: list[str]) -> str:
@@ -624,6 +724,15 @@ def _console_summary(stock_name: str, code: str, current_price: int, decision: D
 보고서 경로: {md_path}"""
 
 
+def analyze_integrated_chart(
+    code: str,
+    fallback_name: str | None = None,
+    provider: KiwoomDataProvider | None = None,
+    now: datetime | None = None,
+) -> str:
+    return analyze_command_chart(code, fallback_name, provider=provider, now=now, require_kiwoom=False, sse_required=False)
+
+
 def _standardize_daily_frame(frame: pd.DataFrame) -> pd.DataFrame:
     out = frame.copy()
     if "DateTime" not in out.columns:
@@ -631,6 +740,14 @@ def _standardize_daily_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if "TradeValue" not in out.columns:
         out["TradeValue"] = out["Close"] * out["Volume"]
     return out[["DateTime", "Open", "High", "Low", "Close", "Volume", "TradeValue"]]
+
+
+def _daily_frame_as_minute_fallback(frame: pd.DataFrame, freq: str) -> pd.DataFrame:
+    out = _standardize_daily_frame(frame).tail(80).copy()
+    end = datetime.now(KST).replace(second=0, microsecond=0)
+    out["DateTime"] = pd.date_range(end=end, periods=len(out), freq=freq)
+    out = out.set_index(pd.to_datetime(out["DateTime"]), drop=False)
+    return out
 
 
 def _validate_quote(

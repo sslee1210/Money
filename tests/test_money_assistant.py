@@ -20,7 +20,7 @@ def test_parse_name_request(monkeypatch):
 
     assert request.code == "005930"
     assert request.name == "삼성전자"
-    assert request.mode == "daily"
+    assert request.mode == "integrated"
 
 
 def test_parse_code_intraday_request():
@@ -42,7 +42,7 @@ def test_parse_kiwoom_request(monkeypatch):
 
 
 def test_run_request_dispatches_without_order_functions(monkeypatch):
-    request = money_assistant.ParsedRequest("005930", "삼성전자", "daily", "삼성전자 분석해줘")
-    monkeypatch.setattr(money_assistant.analyze_stock, "run", lambda code, name: f"daily {code} {name}")
+    request = money_assistant.ParsedRequest("005930", "삼성전자", "integrated", "삼성전자 분석해줘")
+    monkeypatch.setattr(money_assistant.command_chart_analyzer, "analyze_integrated_chart", lambda code, name: f"integrated {code} {name}")
 
-    assert money_assistant.run_request(request) == "daily 005930 삼성전자"
+    assert money_assistant.run_request(request) == "integrated 005930 삼성전자"

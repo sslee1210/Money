@@ -73,7 +73,7 @@ def detect_mode(text: str) -> str:
         return "daily"
     if any(word in text for word in ("장중", "실시간", "현재가")):
         return "intraday"
-    return "intraday" if is_korean_market_open() else "daily"
+    return "integrated"
 
 
 def normalize_query(text: str) -> str:
@@ -197,6 +197,8 @@ def parse_request(text: str) -> ParsedRequest:
 def run_request(request: ParsedRequest) -> str:
     if request.mode == "kiwoom":
         return command_chart_analyzer.analyze_command_chart(request.code, request.name)
+    if request.mode == "integrated":
+        return command_chart_analyzer.analyze_integrated_chart(request.code, request.name)
     if request.mode == "intraday":
         return analyze_stock_intraday.run(request.code, request.name)
     return analyze_stock.run(request.code, request.name)
@@ -204,7 +206,7 @@ def run_request(request: ParsedRequest) -> str:
 
 def run_text(text: str) -> str:
     request = parse_request(text)
-    label = {"kiwoom": "키움 조건부 명령형", "intraday": "장중", "daily": "일봉/스윙"}[request.mode]
+    label = {"kiwoom": "키움 조건부 명령형", "integrated": "통합", "intraday": "장중", "daily": "일봉/스윙"}[request.mode]
     print(f"[분석 실행] {label}: {request.code} {request.name or ''}".strip())
     return run_request(request)
 

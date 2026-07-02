@@ -24,6 +24,7 @@ def validate_command_report(
     data_valid: bool,
     current_price: int,
     sse_result: SSEResult | None = None,
+    realtime_limited: bool = False,
 ) -> list[str]:
     """Return blocking QA errors for a command-style analysis report."""
 
@@ -72,6 +73,12 @@ def validate_command_report(
         errors.append("내부 검증 섹션 누락")
     if "내부 검증: 통과" in report and (decision.blocking_errors or not data_valid):
         errors.append("QA 미통과 상태에서 내부 검증 통과가 출력되었습니다")
+    if realtime_limited:
+        if decision.verdict in {"사라", "조건부로 사라"}:
+            errors.append("실시간 보정 실패 상태에서 신규매수 긍정 판정이 생성되었습니다")
+        required_limit_text = "키움 실시간 데이터 미확인으로 장중 매수 지시는 제한합니다."
+        if required_limit_text not in report:
+            errors.append("실시간 보정 실패 제한 문구가 누락되었습니다")
     if sse_result is not None:
         errors.extend(validate_sse_report(report, decision, sse_result, is_intraday=is_intraday, current_price=current_price))
     return errors

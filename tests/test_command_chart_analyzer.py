@@ -8,6 +8,7 @@ import pandas as pd
 import command_chart_analyzer
 from core.decision_engine import DecisionContext, DecisionLevels, PriceEvidence, evaluate_decision
 from core.indicators import calculate_standard_indicators, indicators_valid, intraday_indicators_valid
+from core.qa import validate_command_report
 from kiwoom.candles import ticks_to_ohlcv
 from kiwoom.models import Quote, Tick
 from kiwoom.provider import KiwoomDataError, KiwoomDataProvider
@@ -92,6 +93,24 @@ class BadQuoteProvider(MockProvider):
         )
 
 
+class MissingTimestampProvider(MockProvider):
+    def get_quote(self, code: str) -> Quote:
+        return Quote(
+            code=code,
+            name="삼성전자",
+            price=54500,
+            prev_close=54300,
+            high=55000,
+            low=54000,
+            timestamp=None,
+        )
+
+
+class ShortMinuteProvider(MockProvider):
+    def get_intraday_ohlcv(self, code: str, interval_minutes: int = 1, limit: int = 600) -> pd.DataFrame:
+        return _minute_frame(5)
+
+
 def test_command_chart_analyzer_imports():
     assert callable(command_chart_analyzer.analyze_command_chart)
 
@@ -149,6 +168,106 @@ def test_success_report_includes_sse_indicator_section(tmp_path, monkeypatch):
     assert "SSE 기준선" in text
     assert "SSE 최종 판정" in text
     assert "산출 근거:" in text
+
+
+def test_integrated_public_ok_kiwoom_ok_saves_layered_report(tmp_path, monkeypatch):
+    monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(command_chart_analyzer, "is_korea_regular_session", lambda now=None: False)
+    monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
+
+    output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=MockProvider())
+    report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
+
+    assert "분석 완료" in output
+    text = report.read_text(encoding="utf-8")
+    assert "## 분석 레이어 상태" in text
+    assert "키움 실시간 보정:" in text
+    assert "실시간 매수 제한 여부: 아니오" in text
+
+
+def test_integrated_public_ok_kiwoom_fail_keeps_public_report_with_realtime_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(command_chart_analyzer, "is_korea_regular_session", lambda now=None: True)
+    monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
+
+    output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=MockProvider(fail=True))
+    report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
+
+    assert "분석 완료" in output
+    text = report.read_text(encoding="utf-8")
+    assert "키움 실시간 데이터 미확인으로 장중 매수 지시는 제한합니다." in text
+    assert "실시간 매수 제한 여부: 예" in text
+    assert "최종 판정: 조건부로 사라" not in text
+
+
+def test_integrated_public_fail_kiwoom_ok_blocks_kiwoom_only_report(tmp_path, monkeypatch):
+    monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: (_ for _ in ()).throw(RuntimeError("public failure")))
+
+    output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=MockProvider())
+
+    assert "분석 중단" in output
+    assert (tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md").exists()
+
+
+def test_integrated_public_fail_kiwoom_fail_stops(tmp_path, monkeypatch):
+    monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: (_ for _ in ()).throw(RuntimeError("public failure")))
+
+    output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=MockProvider(fail=True))
+
+    assert "분석 중단" in output
+    assert (tmp_path / "삼성전자_005930" / "삼성전자_005930_보고서_QA실패.md").exists()
+
+
+def test_integrated_quote_missing_timestamp_marks_realtime_failed(tmp_path, monkeypatch):
+    monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
+
+    output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=MissingTimestampProvider())
+    report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
+
+    assert "분석 완료" in output
+    text = report.read_text(encoding="utf-8")
+    assert "timestamp" in text
+    assert "실시간 매수 제한 여부: 예" in text
+
+
+def test_integrated_short_minutes_marks_realtime_failed(tmp_path, monkeypatch):
+    monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
+
+    output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=ShortMinuteProvider())
+    report = tmp_path / "삼성전자_005930" / "삼성전자_005930_조건부명령형_차트분석.md"
+
+    assert "분석 완료" in output
+    text = report.read_text(encoding="utf-8")
+    assert "키움 체결 데이터 부족 또는 분봉 생성 실패" in text
+    assert "실시간 매수 제한 여부: 예" in text
+
+
+def test_realtime_limited_positive_buy_is_qa_failure():
+    levels = DecisionLevels(
+        support=PriceEvidence("핵심 지지선", 49000, ("20일선",)),
+        confirmation=PriceEvidence("매수 확인선", 49300, ("3분봉 20이평선",)),
+        breakout=PriceEvidence("돌파선", 52000, ("최근 20일 고점",)),
+        stop=PriceEvidence("손절/방어선", 48500, ("최근 20일 저점",)),
+        no_chase=PriceEvidence("추격 금지선", 53200, ("볼린저밴드 상단",)),
+    )
+    decision = evaluate_decision(DecisionContext(current_price=50000, levels=levels, is_intraday=True, risk_reward=2.0))
+    report = "## 내부 검증\n내부 검증: 통과\n"
+
+    errors = validate_command_report(
+        report,
+        decision,
+        levels,
+        is_intraday=True,
+        data_valid=True,
+        current_price=50000,
+        realtime_limited=True,
+    )
+
+    assert any("실시간 보정 실패" in error for error in errors)
 
 
 def test_quote_prev_close_mismatch_stops_normal_report(tmp_path, monkeypatch):
