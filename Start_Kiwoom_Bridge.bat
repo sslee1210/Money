@@ -8,7 +8,8 @@ title Kiwoom Bridge for Money
 
 set "BRIDGE_DIR=%~dp0kiwoom_bridge_server"
 set "BRIDGE_SCRIPT=kiwoom_bridge_flow.py"
-set "BRIDGE_VENV=%BRIDGE_DIR%\.venv32"
+set "BRIDGE_VENV=%BRIDGE_DIR%\.venv32_runtime"
+set "BRIDGE_PYTHON=%BRIDGE_VENV%\Scripts\python.exe"
 set "PYTHON_CMD=py -3-32"
 
 echo.
@@ -35,7 +36,7 @@ if errorlevel 1 (
 
 cd /d "%BRIDGE_DIR%"
 
-if not exist "%BRIDGE_VENV%\Scripts\python.exe" (
+if not exist "%BRIDGE_PYTHON%" (
     echo [setup] Creating 32-bit bridge virtual environment...
     %PYTHON_CMD% -m venv "%BRIDGE_VENV%"
     if errorlevel 1 (
@@ -45,14 +46,26 @@ if not exist "%BRIDGE_VENV%\Scripts\python.exe" (
     )
 )
 
-call "%BRIDGE_VENV%\Scripts\activate.bat"
+"%BRIDGE_PYTHON%" -c "import platform; raise SystemExit(0 if platform.architecture()[0]=='32bit' else 1)" >nul 2>nul
+if errorlevel 1 (
+    echo [error] Bridge virtual environment is not 32-bit.
+    echo [error] Delete %BRIDGE_VENV% and run this file again.
+    pause
+    exit /b 1
+)
+
+"%BRIDGE_PYTHON%" -m pip --version >nul 2>nul
+if errorlevel 1 (
+    echo [setup] Repairing bridge pip...
+    "%BRIDGE_PYTHON%" -m ensurepip --upgrade
+)
 
 echo [setup] Checking bridge packages...
-python -B -c "import fastapi,uvicorn,PyQt5,win32com.client" >nul 2>nul
+"%BRIDGE_PYTHON%" -B -c "import fastapi,uvicorn,PyQt5,win32com.client" >nul 2>nul
 if errorlevel 1 (
     echo [setup] Installing bridge packages into 32-bit environment...
-    python -m pip install --upgrade pip
-    python -m pip install -r requirements.txt
+    "%BRIDGE_PYTHON%" -m pip install --upgrade pip
+    "%BRIDGE_PYTHON%" -m pip install -r requirements.txt
     if errorlevel 1 (
         echo [error] Failed to install bridge packages.
         pause
@@ -61,7 +74,7 @@ if errorlevel 1 (
 )
 
 echo [kiwoom] Checking Kiwoom OpenAPI+ ActiveX registration...
-python -B -c "import sys; from PyQt5.QtWidgets import QApplication; from PyQt5.QAxContainer import QAxWidget; app=QApplication(sys.argv); ocx=QAxWidget('KHOPENAPI.KHOpenAPICtrl.1'); raise SystemExit(0 if not ocx.isNull() else 1)" >nul 2>nul
+"%BRIDGE_PYTHON%" -B -c "import sys; from PyQt5.QtWidgets import QApplication; from PyQt5.QAxContainer import QAxWidget; app=QApplication(sys.argv); ocx=QAxWidget('KHOPENAPI.KHOpenAPICtrl.1'); raise SystemExit(0 if not ocx.isNull() else 1)" >nul 2>nul
 if errorlevel 1 (
     echo [error] Kiwoom OpenAPI+ ActiveX could not be created.
     echo [error] Install or repair Kiwoom OpenAPI+ first:
@@ -82,7 +95,7 @@ set FLOW_EVENT_TTL_SEC=900
 
 echo [kiwoom] Starting Kiwoom OpenAPI+ bridge at http://127.0.0.1:8765
 echo [kiwoom] If a Kiwoom login window appears, complete login and keep this bridge window open.
-python "%BRIDGE_SCRIPT%"
+"%BRIDGE_PYTHON%" "%BRIDGE_SCRIPT%"
 
 echo.
 echo Kiwoom bridge closed.

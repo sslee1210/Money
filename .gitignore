@@ -12,6 +12,7 @@ data/cache/
 .env.*
 .venv/
 .venv32/
+.venv32*/
 venv/
 env/
 
