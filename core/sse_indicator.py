@@ -148,6 +148,8 @@ def classify_sse_verdict(levels: SSELevels, current_price: float, is_intraday: b
         return "사지 마라"
     if levels.pressure < -1.0:
         return "사지 마라"
+    if current_price >= levels.target1:
+        return "보유하라"
     if current_price < levels.base:
         return "기다려라"
     if current_price < levels.entry:
@@ -156,8 +158,6 @@ def classify_sse_verdict(levels: SSELevels, current_price: float, is_intraday: b
         return "사지 마라"
     if 0.3 <= levels.pressure < 1.5 and current_price < levels.no_chase:
         return "조건부로 사라"
-    if current_price >= levels.target1:
-        return "보유하라"
     return "기다려라"
 
 
@@ -177,11 +177,17 @@ def calculate_sse_indicator(
         errors = validate_sse_levels(levels)
         if not _is_finite(effective_price) or effective_price <= 0:
             errors.append("현재가 산정 불가")
-        if is_intraday and not _has_intraday_close_condition(minute3_ind, minute5_ind, levels.entry):
+        intraday_entry_confirmed = True
+        if is_intraday:
+            intraday_entry_confirmed = _has_intraday_close_condition(minute3_ind, minute5_ind, levels.entry)
+        if is_intraday and not intraday_entry_confirmed:
             warnings.append("장중 SSE 진입은 3분봉 또는 5분봉 종가가 SSE_ENTRY 이상에서 유지될 때만 유효")
         if _is_finite(levels.rr2) and _is_finite(levels.rr1) and levels.rr2 <= levels.rr1:
             warnings.append("SSE_RR2 <= SSE_RR1")
         verdict = "분석 중단" if errors else classify_sse_verdict(levels, effective_price, is_intraday)
+        if verdict in {"사라", "조건부로 사라"} and is_intraday and not intraday_entry_confirmed:
+            verdict = "기다려라"
+            warnings.append("장중 3분봉/5분봉 종가가 SSE_ENTRY 이상에서 유지되지 않아 아직 진입 조건 미충족")
         return SSEResult(verdict, levels, _build_evidence(sse_frame, levels), tuple(warnings), tuple(errors))
     except Exception as exc:
         return SSEResult("분석 중단", _empty_levels(), (), (), (f"SSE 계산 실패: {type(exc).__name__}: {exc}",))
@@ -198,6 +204,12 @@ def _levels_from_frame(frame: pd.DataFrame, current_price: float | None) -> SSEL
     no_chase = _finite(row.get("SSE_NO_CHASE"))
     target1 = _select_target1(frame, current_price, entry)
     target2 = _select_target2(frame, current_price, target1)
+    row_pressure = _finite(row.get("SSE_PRESSURE"))
+    pressure = (
+        (_finite(current_price) - base) / volatility
+        if _is_finite(current_price) and _is_finite(base) and _is_finite(volatility) and volatility > 0
+        else row_pressure
+    )
     risk = entry - stop if _is_finite(entry) and _is_finite(stop) else np.nan
     rr1 = (target1 - entry) / risk if _is_finite(target1) and _is_finite(entry) and _is_finite(risk) and risk > 0 else np.nan
     rr2 = (target2 - entry) / risk if _is_finite(target2) and _is_finite(entry) and _is_finite(risk) and risk > 0 else np.nan
@@ -205,7 +217,7 @@ def _levels_from_frame(frame: pd.DataFrame, current_price: float | None) -> SSEL
         base=base,
         upper=_finite(row.get("SSE_UPPER")),
         lower=_finite(row.get("SSE_LOWER")),
-        pressure=_finite(row.get("SSE_PRESSURE")),
+        pressure=pressure,
         entry=entry,
         stop=stop,
         target1=target1,

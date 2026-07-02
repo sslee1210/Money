@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
+from core.decision_engine import DecisionResult, PriceEvidence
 from core.sse_indicator import (
     SSELevels,
+    SSEResult,
     add_sse_columns,
     calculate_sse_indicator,
     classify_sse_verdict,
     validate_sse_levels,
 )
-from command_chart_analyzer import render_sse_section
+from command_chart_analyzer import apply_sse_safety_filter, render_sse_section
 
 
 def _frame(rows: int = 260) -> pd.DataFrame:
@@ -78,6 +81,17 @@ def test_sse_pressure_uses_close_base_and_volatility():
     assert row["SSE_PRESSURE"] == expected
 
 
+def test_sse_pressure_recalculates_from_current_price_when_supplied():
+    out = add_sse_columns(_frame())
+    row = out.iloc[-1]
+    current_price = float(row["Close"] + row["SSE_VOLATILITY"] * 2)
+    result = calculate_sse_indicator(out, current_price=current_price, is_intraday=False)
+    expected = (current_price - row["SSE_BASE"]) / row["SSE_VOLATILITY"]
+
+    assert result.levels.pressure == pytest.approx(expected)
+    assert result.levels.pressure != pytest.approx(row["SSE_PRESSURE"])
+
+
 def test_no_chase_blocks_conditional_buy():
     levels = _valid_levels()
     verdict = classify_sse_verdict(levels, levels.no_chase + 1, is_intraday=True)
@@ -107,6 +121,69 @@ def test_pressure_overheated_blocks_chase():
 def test_pressure_weak_break_blocks_new_buy():
     levels = _valid_levels(pressure=-1.2)
     assert classify_sse_verdict(levels, 99, is_intraday=False) == "사지 마라"
+
+
+def test_target1_reached_does_not_return_conditional_buy():
+    levels = _valid_levels(pressure=0.8, target1=110.0, target2=130.0, no_chase=125.0)
+    verdict = classify_sse_verdict(levels, 110.0, is_intraday=False)
+
+    assert verdict == "보유하라"
+    assert verdict != "조건부로 사라"
+
+
+def test_intraday_close_below_entry_blocks_immediate_buy_verdict():
+    daily = _frame()
+    daily.loc[daily.index[-40], "High"] = 13500
+    daily.loc[daily.index[-1], "High"] = 13120
+    sse_frame = add_sse_columns(daily)
+    row = sse_frame.iloc[-1]
+    current_price = float(row["SSE_BASE"] + 1.3 * row["SSE_VOLATILITY"])
+    entry = float(row["SSE_ENTRY"])
+    minute3 = _frame(80)
+    minute5 = _frame(80)
+    minute3.loc[minute3.index[-1], "Close"] = entry - 1
+    minute5.loc[minute5.index[-1], "Close"] = entry - 1
+    control = calculate_sse_indicator(daily, current_price=current_price, is_intraday=False)
+
+    result = calculate_sse_indicator(
+        daily,
+        minute3_ind=minute3,
+        minute5_ind=minute5,
+        current_price=current_price,
+        is_intraday=True,
+    )
+
+    assert control.verdict == "조건부로 사라"
+    assert result.verdict == "기다려라"
+    assert result.verdict != "조건부로 사라"
+    assert any("진입 조건 미충족" in warning for warning in result.warnings)
+
+
+def test_sse_safety_filter_overrides_to_more_conservative_decision():
+    evidence = PriceEvidence("매수 확인선", 103, ("테스트 근거",))
+    decision = DecisionResult(
+        verdict="조건부로 사라",
+        headline="기존 판단",
+        actions=("기존 조건부 매수",),
+        buy_conditions=("지지 매수: 100원 지지 후 103원 회복 시",),
+        no_buy_conditions=("125원 이상에서는 추격 매수하지 마라.",),
+        sell_conditions=("92원 이탈 시 팔아라.",),
+        holder_conditions=("100원 이탈 전까지 보유하라.",),
+        price_evidence=(evidence,),
+        final_action_state="WATCH_INTRADAY_BREAKOUT",
+    )
+    sse_result = SSEResult(
+        verdict="사지 마라",
+        levels=_valid_levels(no_chase=125.0, rr1=1.36),
+        evidence=(),
+        warnings=(),
+        blocking_errors=(),
+    )
+
+    filtered = apply_sse_safety_filter(decision, sse_result, current_price=110, is_intraday=True)
+
+    assert filtered.verdict == "사지 마라"
+    assert "SSE 안전 필터 적용" in filtered.headline
 
 
 def test_intraday_sse_report_does_not_use_confirmed_breakout_wording():

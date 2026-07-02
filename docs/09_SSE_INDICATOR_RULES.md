@@ -102,6 +102,12 @@ SSE_LOWER = SSE_BASE - 1.8 * SSE_VOLATILITY
 SSE_PRESSURE = (Close - SSE_BASE) / SSE_VOLATILITY
 ```
 
+장중 키움 현재가 또는 별도 `current_price`가 유효하면 리포트 판정용 압력값은 아래처럼 현재가 기준으로 재계산한다. 현재가가 없거나 유효하지 않을 때만 일봉 `Close` 기반 `SSE_PRESSURE`를 fallback으로 사용한다.
+
+```python
+SSE_PRESSURE = (current_price - SSE_BASE) / SSE_VOLATILITY
+```
+
 해석:
 
 | 압력값 | 해석 |
@@ -213,4 +219,3 @@ SSE와 기존 명령형 판단이 충돌하면 더 안전한 판정을 우선한
 - `SSE_PRESSURE >= 1.5`인데 신규매수 긍정 판정
 - `SSE_PRESSURE < -1.0`인데 신규매수 긍정 판정
 - 가격 근거 없이 진입가, 손절가, 익절가를 출력
-
