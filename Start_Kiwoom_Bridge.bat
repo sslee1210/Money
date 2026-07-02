@@ -6,7 +6,7 @@ set PYTHONIOENCODING=utf-8
 
 title Kiwoom Bridge for Money
 
-set "BRIDGE_DIR=%USERPROFILE%\Desktop\millionaire\bridge"
+set "BRIDGE_DIR=%~dp0kiwoom_bridge_server"
 set "BRIDGE_SCRIPT=kiwoom_bridge_flow.py"
 set "BRIDGE_VENV=%BRIDGE_DIR%\.venv32"
 set "PYTHON_CMD=py -3-32"
