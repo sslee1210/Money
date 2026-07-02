@@ -13,6 +13,12 @@ echo  Money Assistant
 echo ========================================
 echo.
 
+if "%KIWOOM_BRIDGE_URL%"=="" (
+    set "KIWOOM_BRIDGE_URL=http://127.0.0.1:8765"
+)
+
+echo [kiwoom] Bridge URL: %KIWOOM_BRIDGE_URL%
+
 if not exist ".venv\Scripts\python.exe" (
     echo [setup] Creating virtual environment...
     py -3.11-64 -m venv .venv
@@ -39,6 +45,15 @@ if errorlevel 1 (
         pause
         exit /b 1
     )
+)
+
+echo [kiwoom] Checking local bridge connection...
+".venv\Scripts\python.exe" -B -c "import os,socket,urllib.parse; u=urllib.parse.urlparse(os.environ.get('KIWOOM_BRIDGE_URL','')); host=u.hostname or '127.0.0.1'; port=u.port or 80; s=socket.create_connection((host,port),timeout=1.5); s.close()" >nul 2>nul
+if errorlevel 1 (
+    echo [kiwoom] Local bridge is not reachable. Integrated analysis will keep public-data analysis and limit intraday buy instructions.
+    echo [kiwoom] Start your Kiwoom bridge first if you want realtime quote/minute correction.
+) else (
+    echo [kiwoom] Local bridge is reachable. Realtime correction will be attempted.
 )
 
 echo.
