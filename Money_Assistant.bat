@@ -50,7 +50,7 @@ if errorlevel 1 (
 )
 
 echo [kiwoom] Checking local bridge connection...
-".venv\Scripts\python.exe" -B -c "import os,socket,urllib.parse; u=urllib.parse.urlparse(os.environ.get('KIWOOM_BRIDGE_URL','')); host=u.hostname or '127.0.0.1'; port=u.port or 80; s=socket.create_connection((host,port),timeout=1.5); s.close()" >nul 2>nul
+".venv\Scripts\python.exe" -B kiwoom_bridge_status.py --quiet >nul 2>nul
 if errorlevel 1 (
     echo [kiwoom] Local bridge is not reachable. Trying to start existing Kiwoom bridge...
     if not exist "%KIWOOM_BRIDGE_BAT%" (
@@ -61,7 +61,7 @@ if errorlevel 1 (
         start "Kiwoom Bridge" "%KIWOOM_BRIDGE_BAT%"
         echo [kiwoom] Waiting for bridge. Complete the Kiwoom login window if it appears.
         for /l %%i in (1,1,30) do (
-            ".venv\Scripts\python.exe" -B -c "import os,socket,urllib.parse; u=urllib.parse.urlparse(os.environ.get('KIWOOM_BRIDGE_URL','')); host=u.hostname or '127.0.0.1'; port=u.port or 80; s=socket.create_connection((host,port),timeout=1.0); s.close()" >nul 2>nul
+            ".venv\Scripts\python.exe" -B kiwoom_bridge_status.py --quiet >nul 2>nul
             if not errorlevel 1 goto kiwoom_bridge_ready
             timeout /t 2 /nobreak >nul
         )
@@ -77,7 +77,19 @@ if errorlevel 1 (
 goto kiwoom_bridge_checked
 
 :kiwoom_bridge_ready
-echo [kiwoom] Local bridge is reachable. Realtime correction will be attempted.
+echo [kiwoom] Local bridge is reachable. Checking Kiwoom login status...
+".venv\Scripts\python.exe" -B kiwoom_bridge_status.py
+for /l %%i in (1,1,60) do (
+    ".venv\Scripts\python.exe" -B kiwoom_bridge_status.py --require-login --quiet >nul 2>nul
+    if not errorlevel 1 goto kiwoom_login_ready
+    timeout /t 2 /nobreak >nul
+)
+echo [kiwoom] Bridge is running, but Kiwoom login is not completed yet.
+echo [kiwoom] Integrated analysis will keep public-data analysis and limit intraday buy instructions until login completes.
+goto kiwoom_bridge_checked
+
+:kiwoom_login_ready
+echo [kiwoom] Kiwoom login is ready. Realtime correction will be attempted.
 
 :kiwoom_bridge_checked
 
