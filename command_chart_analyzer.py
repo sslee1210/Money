@@ -8,6 +8,7 @@ not expose automated trading functions.
 
 import argparse
 import sys
+import time as time_module
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from typing import Any
@@ -43,6 +44,9 @@ from kiwoom.provider import KiwoomDataError, KiwoomDataProvider
 
 KST = ZoneInfo("Asia/Seoul")
 DAILY_MIN_COMPLETED_ROWS = 240
+INTRADAY_MIN_ROWS = 20
+INTRADAY_RETRY_ATTEMPTS = 4
+INTRADAY_RETRY_DELAY_SEC = 1.0
 
 
 @dataclass(frozen=True)
@@ -229,6 +233,33 @@ def _select_daily_source(sources: list[SourceFrame | None], validation: pd.DataF
     return None
 
 
+def _get_intraday_ohlcv_with_retry(
+    provider: KiwoomDataProvider,
+    code: str,
+    interval_minutes: int,
+    *,
+    min_rows: int = INTRADAY_MIN_ROWS,
+) -> pd.DataFrame:
+    last_error: Exception | None = None
+    last_rows = 0
+    attempts = max(1, int(INTRADAY_RETRY_ATTEMPTS))
+    for attempt in range(attempts):
+        try:
+            frame = provider.get_intraday_ohlcv(code, interval_minutes=interval_minutes)
+            last_rows = 0 if frame is None else len(frame)
+            if frame is not None and last_rows >= min_rows:
+                return frame
+        except Exception as exc:
+            last_error = exc
+        if attempt < attempts - 1 and INTRADAY_RETRY_DELAY_SEC > 0:
+            time_module.sleep(INTRADAY_RETRY_DELAY_SEC)
+
+    detail = f"{interval_minutes}분봉 {last_rows}개"
+    if last_error is not None:
+        detail = f"{detail}, 마지막 오류: {last_error}"
+    raise KiwoomDataError(f"키움 체결 데이터 부족 또는 분봉 생성 실패: {detail}")
+
+
 def analyze_command_chart(
     code: str,
     fallback_name: str | None = None,
@@ -267,9 +298,9 @@ def analyze_command_chart(
         kiwoom_errors.append(f"키움 현재가 수집 실패: {exc}")
 
     try:
-        minute3 = provider.get_intraday_ohlcv(code, interval_minutes=3)
-        minute5 = provider.get_intraday_ohlcv(code, interval_minutes=5)
-        if len(minute3) < 20 or len(minute5) < 20:
+        minute3 = _get_intraday_ohlcv_with_retry(provider, code, interval_minutes=3)
+        minute5 = _get_intraday_ohlcv_with_retry(provider, code, interval_minutes=5)
+        if len(minute3) < INTRADAY_MIN_ROWS or len(minute5) < INTRADAY_MIN_ROWS:
             kiwoom_errors.append("키움 체결 데이터 부족 또는 분봉 생성 실패")
     except Exception as exc:
         kiwoom_errors.append(f"분봉 생성 실패: {exc}")

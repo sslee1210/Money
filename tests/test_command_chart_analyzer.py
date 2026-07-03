@@ -114,6 +114,19 @@ class ShortMinuteProvider(MockProvider):
         return _minute_frame(5)
 
 
+class TransientShortMinuteProvider(MockProvider):
+    def __init__(self):
+        super().__init__(fail=False)
+        self.calls: dict[int, int] = {}
+
+    def get_intraday_ohlcv(self, code: str, interval_minutes: int = 1, limit: int = 600) -> pd.DataFrame:
+        count = self.calls.get(interval_minutes, 0)
+        self.calls[interval_minutes] = count + 1
+        if count == 0:
+            return _minute_frame(5)
+        return super().get_intraday_ohlcv(code, interval_minutes, limit)
+
+
 class MissingMinuteEndpointClient:
     def get_quote(self, code: str):
         return {}
@@ -314,6 +327,8 @@ def test_integrated_quote_missing_timestamp_stops_without_normal_report(tmp_path
 
 def test_integrated_short_minutes_stops_without_normal_report(tmp_path, monkeypatch):
     monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(command_chart_analyzer, "INTRADAY_RETRY_ATTEMPTS", 2)
+    monkeypatch.setattr(command_chart_analyzer, "INTRADAY_RETRY_DELAY_SEC", 0)
     monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
 
     output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=ShortMinuteProvider())
@@ -324,6 +339,24 @@ def test_integrated_short_minutes_stops_without_normal_report(tmp_path, monkeypa
     assert not report.exists()
     assert qa_report.exists()
     assert "키움 체결 데이터 부족 또는 분봉 생성 실패" in qa_report.read_text(encoding="utf-8")
+
+
+def test_integrated_transient_short_minutes_retries_and_saves_report(tmp_path, monkeypatch):
+    monkeypatch.setattr(command_chart_analyzer, "REPORTS_DIR", tmp_path)
+    monkeypatch.setattr(command_chart_analyzer, "INTRADAY_RETRY_ATTEMPTS", 3)
+    monkeypatch.setattr(command_chart_analyzer, "INTRADAY_RETRY_DELAY_SEC", 0)
+    monkeypatch.setattr(command_chart_analyzer, "is_korea_regular_session", lambda now=None: False)
+    monkeypatch.setattr(command_chart_analyzer, "collect_daily_data", lambda code, name, provider=None: command_chart_analyzer.DailyData("삼성전자", "KOSPI", ".KS", _daily_frame(), "높음", "mock", False, 54300))
+
+    provider = TransientShortMinuteProvider()
+    output = command_chart_analyzer.analyze_integrated_chart("005930", "삼성전자", provider=provider)
+    report = _report_path(tmp_path)
+
+    assert "분석 완료" in output
+    assert report.exists()
+    assert not _qa_report_path(tmp_path).exists()
+    assert provider.calls[3] == 2
+    assert provider.calls[5] == 2
 
 
 def test_realtime_limited_positive_buy_is_qa_failure():
