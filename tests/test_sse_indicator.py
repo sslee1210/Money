@@ -242,3 +242,32 @@ def test_price_evidence_deduplicates_breakout_target1_and_no_chase_target2_confl
 
     assert sum("돌파선" in summary for summary in summaries) == 1
     assert not any("신규매수 기준 2차 목표 130원" in summary for summary in summaries)
+def test_sse_opportunity_score_is_soft_layer_and_keeps_safety_filter():
+    daily = _frame()
+    sse_frame = add_sse_columns(daily)
+    row = sse_frame.iloc[-1]
+    current_price = float(row["SSE_NO_CHASE"] + 1)
+
+    result = calculate_sse_indicator(daily, current_price=current_price, is_intraday=False)
+
+    assert result.verdict == "사지 마라"
+    assert result.opportunity is not None
+    assert result.opportunity.grade == "제외"
+    assert result.opportunity.setup == "OVERHEATED_HOLD_ONLY"
+    assert any(item.label == "SSE 기회 점수" for item in result.evidence)
+
+
+def test_sse_opportunity_score_can_mark_watch_candidate_without_buy_override():
+    daily = _frame()
+    sse_frame = add_sse_columns(daily)
+    row = sse_frame.iloc[-1]
+    current_price = float(row["SSE_BASE"] + 0.5 * row["SSE_VOLATILITY"])
+
+    result = calculate_sse_indicator(daily, current_price=current_price, is_intraday=False)
+
+    assert result.opportunity is not None
+    assert result.opportunity.score >= 0
+    assert result.verdict in {"조건부로 사라", "사지 마라", "기다려라", "보유하라"}
+    assert "사라" not in result.opportunity.grade
+
+
