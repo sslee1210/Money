@@ -140,7 +140,7 @@ def collect_daily_data(code: str, fallback_name: str | None, provider: KiwoomDat
                 else:
                     validation_note = f"{validation_note}; 키움 일봉 교차검증 통과({diff_pct:.2f}%)"
     elif market != "US":
-        validation_note = f"{validation_note}; 키움 일봉 후보 미사용: {kiwoom_source.note}"
+        validation_note = f"{validation_note}; 키움 일봉 후보 미사용(비차단): {kiwoom_source.note}"
 
     selected = _select_daily_source(
         [kiwoom_source if kiwoom_eligible else None, *public_sources],
@@ -624,6 +624,7 @@ def render_report(
     holder = "\n".join(f"* {line}" for line in decision.holder_conditions)
     sse_section = render_sse_section(sse_result) if sse_result is not None else ""
     pipeline_section = render_pipeline_section(pipeline) if pipeline is not None else ""
+    internal_validation = render_internal_validation_section(daily_data, pipeline, sse_result)
     return f"""# [{stock_name}, {code}] 분석 보고서
 
 [최종 매매 지시]
@@ -669,14 +670,42 @@ def render_report(
 
 ## 내부 검증
 
-내부 검증: 통과
+{internal_validation}
+"""
+
+
+def render_internal_validation_section(
+    daily_data: DailyData,
+    pipeline: IntegratedAnalysisResult | None,
+    sse_result: SSEResult | None,
+) -> str:
+    warnings: list[str] = []
+    if "후보 미사용" in daily_data.validation_note:
+        warnings.append("키움 일봉 후보 미사용")
+    if "경고" in daily_data.validation_note:
+        warnings.append("데이터 검증 경고 포함")
+    if pipeline is not None:
+        for status in (pipeline.public_status, pipeline.kiwoom_status, pipeline.sse_status):
+            warnings.extend(status.warnings)
+            warnings.extend(status.blocking_errors)
+    if sse_result is not None:
+        warnings.extend(sse_result.warnings)
+        warnings.extend(sse_result.blocking_errors)
+
+    normalized_warnings = tuple(dict.fromkeys(item for item in warnings if item))
+    status = "통과" if not normalized_warnings else "통과(경고 있음)"
+    cross_validation = daily_data.reliability if not normalized_warnings else "중간"
+    sse_reliability = "높음" if sse_result is not None and not sse_result.blocking_errors else "제한"
+    warning_text = "없음" if not normalized_warnings else "; ".join(normalized_warnings)
+    return f"""내부 검증: {status}
 가격 신뢰도: {daily_data.reliability}
 거래량 신뢰도: {daily_data.reliability}
 지표 신뢰도: 높음
-교차검증 완전성: {daily_data.reliability}
+SSE 신뢰도: {sse_reliability}
+교차검증 완전성: {cross_validation}
 수급 신뢰도: 낮음
 해석 완전성: 높음
-"""
+경고 요약: {warning_text}"""
 
 
 def render_pipeline_section(pipeline: IntegratedAnalysisResult) -> str:
@@ -767,7 +796,7 @@ def _price_source_info(quote: Any, is_intraday: bool) -> PriceSourceInfo:
     if is_intraday:
         return PriceSourceInfo("키움 TR 기준가", "키움 장중 TR 보정", f"실시간 체결 FID가 아니라 키움 TR 기준가입니다({source_label}). 장중 실시간 호가/체결 화면과 차이가 날 수 있습니다.", False)
     if is_current_tr:
-        return PriceSourceInfo("장마감 기준가", "키움 장마감 TR 보정", f"장마감 이후 키움 TR/완료 일봉 기준가입니다({source_label}). 시간외·관심화면 가격과 다를 수 있습니다.", False)
+        return PriceSourceInfo("장마감 기준가", "키움 장마감 TR 보정", f"장마감 이후 키움 TR 가격 기준입니다({source_label}). 완료 일봉 대표값은 공개 데이터와 별도 교차검증합니다. 시간외·관심화면 가격과 다를 수 있습니다.", False)
     return PriceSourceInfo("키움 기준가", "키움 가격 보정", f"키움 가격 데이터 기준입니다({source_label}).", False)
 
 

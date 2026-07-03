@@ -14,6 +14,8 @@ ALLOWED_VERDICTS: set[Verdict] = {
     "분석 중단",
 }
 
+INTRADAY_BANNED_CONFIRMED_PHRASES = ("확정 돌파", "일봉 돌파 확정", "돌파 확인 완료")
+
 
 def validate_command_report(
     report: str,
@@ -35,7 +37,7 @@ def validate_command_report(
         errors.append("데이터 invalid 상태에서 정상 판정이 생성되었습니다")
     if decision.blocking_errors:
         errors.extend(decision.blocking_errors)
-    if is_intraday and any(phrase in report for phrase in ["확정", "일봉 돌파 확정", "확정 돌파", "돌파 확인 완료"]):
+    if is_intraday and any(phrase in report for phrase in INTRADAY_BANNED_CONFIRMED_PHRASES):
         errors.append("장중 리포트에 확정 돌파 표현이 포함되었습니다")
 
     required_evidence = {
@@ -105,13 +107,36 @@ def validate_sse_report(
         errors.append("SSE 압력값 과열권인데 신규매수 긍정 판정이 생성되었습니다")
     if levels.pressure < -1.0 and buy_positive:
         errors.append("SSE 압력값 약세 이탈인데 신규매수 긍정 판정이 생성되었습니다")
-    if is_intraday and any(phrase in report for phrase in ["확정 돌파", "일봉 돌파 확정", "돌파 확인 완료"]):
+    if is_intraday and any(phrase in report for phrase in INTRADAY_BANNED_CONFIRMED_PHRASES):
         errors.append("SSE 장중 리포트에 확정 돌파 표현이 포함되었습니다")
     if "## SSE Indicator 분석" not in report:
         errors.append("SSE Indicator 분석 섹션 누락")
     if "산출 근거:" not in report:
         errors.append("SSE 산출 근거 누락")
-    for label in ["예상 진입가", "예상 손절가", "1차 익절가", "2차 익절가", "추격 금지선"]:
+
+    report_required_labels = [
+        "SSE 기준선",
+        "SSE 상단선",
+        "SSE 하단선",
+        "SSE 압력값",
+        "예상 진입가",
+        "예상 손절가",
+        "1차 익절가",
+        "2차 익절가",
+        "추격 금지선",
+        "1차 목표 기준 손익비",
+        "2차 목표 기준 손익비",
+        "SSE 최종 판정",
+    ]
+    for label in report_required_labels:
         if label not in report:
             errors.append(f"SSE {label} 출력 누락")
+
+    evidence_labels = {item.label for item in sse_result.evidence}
+    required_evidence_labels = {"예상 진입가", "예상 손절가", "1차 익절가", "2차 익절가", "추격 금지선"}
+    missing_evidence = sorted(required_evidence_labels - evidence_labels)
+    if missing_evidence:
+        errors.append(f"SSE 가격 산출 근거 누락: {', '.join(missing_evidence)}")
+    if sse_result.evidence and not all(item.formula and item.reason for item in sse_result.evidence):
+        errors.append("SSE 산출 근거의 공식 또는 사유가 비어 있습니다")
     return errors

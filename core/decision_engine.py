@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 
@@ -131,11 +131,18 @@ def evaluate_decision(ctx: DecisionContext) -> DecisionResult:
     elif current >= levels.confirmation.price and not weak_rr:
         verdict = "조건부로 사라"
         headline = "지지 후 회복 확인: 조건부 1차 매수"
-        actions = (
-            "지금 바로 시장가로 사지 마라.",
-            f"{format_price(levels.support.price)}을 깨지 않고 {format_price(levels.confirmation.price)} 이상에서 3분봉 또는 5분봉 종가가 마감될 때만 1차 매수하라.",
-        )
-        final_state = "WAIT_RECOVERY_CLOSE" if ctx.is_intraday else "HOLD_AND_TRAIL"
+        if ctx.is_intraday:
+            actions = (
+                "지금 바로 시장가로 사지 마라.",
+                f"{format_price(levels.support.price)}을 깨지 않고 {format_price(levels.confirmation.price)} 이상에서 3분봉 또는 5분봉 종가가 마감될 때만 1차 매수하라.",
+            )
+            final_state = "WAIT_RECOVERY_CLOSE"
+        else:
+            actions = (
+                "지금 바로 시장가로 사지 마라.",
+                f"다음 거래일에 {format_price(levels.support.price)}을 깨지 않고 {format_price(levels.confirmation.price)} 이상을 유지할 때만 1차 매수를 검토하라.",
+            )
+            final_state = "HOLD_AND_TRAIL"
     elif levels.support.price <= current < levels.confirmation.price:
         verdict = "기다려라"
         headline = "지지 구간 안: 회복 확인 전 대기"
@@ -151,10 +158,16 @@ def evaluate_decision(ctx: DecisionContext) -> DecisionResult:
         f"지지 매수: {format_price(levels.support.price)} 지지 후 {format_price(levels.confirmation.price)} 회복 시",
         _breakout_condition(levels, ctx.is_intraday),
     )
-    no_buy_conditions = (
-        f"{format_price(levels.support.price)} 아래에서 5분봉 종가가 마감되면 사지 마라.",
-        f"{format_price(levels.no_chase.price)} 이상에서는 추격 매수하지 마라.",
-    )
+    if ctx.is_intraday:
+        no_buy_conditions = (
+            f"{format_price(levels.support.price)} 아래에서 5분봉 종가가 마감되면 사지 마라.",
+            f"{format_price(levels.no_chase.price)} 이상에서는 추격 매수하지 마라.",
+        )
+    else:
+        no_buy_conditions = (
+            f"다음 거래일에 {format_price(levels.support.price)} 아래로 밀리거나 일봉 종가가 이 가격 아래이면 사지 마라.",
+            f"{format_price(levels.no_chase.price)} 이상에서는 추격 매수하지 마라.",
+        )
     sell_conditions = (f"{format_price(levels.stop.price)} 이탈 시 팔아라 또는 비중 축소하라.",)
     holder_conditions = (f"보유자는 {format_price(levels.support.price)} 이탈 시 추가매수 보류, {format_price(levels.stop.price)} 이탈 시 방어/손절하라.",)
     return DecisionResult(
@@ -200,4 +213,43 @@ def _missing_required_evidence(levels: DecisionLevels) -> list[str]:
 
 
 def _evidence_tuple(levels: DecisionLevels) -> tuple[PriceEvidence, ...]:
-    return tuple(e for e in [levels.support, levels.confirmation, levels.breakout, levels.no_chase, levels.stop, levels.target1, levels.target2] if e is not None)
+    """Return display evidence without duplicated semantic price rows.
+
+    Keep the original breakout row when target1 is the same object/price.
+    Suppress only the duplicate target1 role and suppress target2 when it is
+    the same price as the no-chase line, because that price is a stop-chasing
+    boundary rather than a clean profit target.
+    """
+
+    ordered: tuple[tuple[str, PriceEvidence | None], ...] = (
+        ("support", levels.support),
+        ("confirmation", levels.confirmation),
+        ("breakout", levels.breakout),
+        ("no_chase", levels.no_chase),
+        ("stop", levels.stop),
+        ("target1", levels.target1),
+        ("target2", levels.target2),
+    )
+    output: list[PriceEvidence] = []
+    seen: set[tuple[str, int, tuple[str, ...]]] = set()
+
+    for role, evidence in ordered:
+        if evidence is None:
+            continue
+        if (
+            role == "target1"
+            and levels.breakout is not None
+            and evidence.price == levels.breakout.price
+            and evidence.reasons == levels.breakout.reasons
+        ):
+            continue
+        if role == "target2" and levels.no_chase is not None and evidence.price == levels.no_chase.price:
+            continue
+
+        key = (evidence.label, evidence.price, evidence.reasons)
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(evidence)
+
+    return tuple(output)

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from core.decision_engine import DecisionResult, PriceEvidence
+from core.decision_engine import DecisionContext, DecisionLevels, DecisionResult, PriceEvidence, evaluate_decision
 from core.sse_indicator import (
     SSELevels,
     SSEResult,
@@ -72,6 +72,18 @@ def test_sse_volatility_uses_std_mid_gap_and_ma_gap():
         + 0.25 * abs(row["SSE_MA20"] - row["SSE_MA60"])
     )
     assert row["SSE_VOLATILITY"] == expected
+    assert row["SSE_BALANCE_GAP"] == abs(row["SSE_MID26"] - row["SSE_MID52"])
+    assert row["SSE_MA_GAP"] == abs(row["SSE_MA20"] - row["SSE_MA60"])
+
+
+def test_sse_cloud_thickness_uses_raw_ichimoku_time_structure():
+    out = add_sse_columns(_frame())
+    row = out.iloc[-1]
+    expected_span1 = (row["SSE_MID9"] + row["SSE_MID26"]) / 2
+    expected_thickness = abs(expected_span1 - row["SSE_MID52"])
+    assert row["SSE_CLOUD_SPAN1_RAW"] == expected_span1
+    assert row["SSE_CLOUD_SPAN2_RAW"] == row["SSE_MID52"]
+    assert row["SSE_CLOUD_THICKNESS"] == expected_thickness
 
 
 def test_sse_pressure_uses_close_base_and_volatility():
@@ -192,3 +204,41 @@ def test_intraday_sse_report_does_not_use_confirmed_breakout_wording():
     assert "확정 돌파" not in section
     assert "일봉 돌파 확정" not in section
     assert "돌파 확인 완료" not in section
+
+
+def test_daily_decision_does_not_emit_intraday_5min_condition():
+    support = PriceEvidence("핵심 지지선", 100, ("테스트",))
+    confirmation = PriceEvidence("매수 확인선", 105, ("테스트",))
+    breakout = PriceEvidence("돌파선", 120, ("테스트",))
+    stop = PriceEvidence("손절/방어선", 90, ("테스트",))
+    no_chase = PriceEvidence("추격 금지선", 130, ("테스트",))
+    result = evaluate_decision(
+        DecisionContext(
+            current_price=103,
+            levels=DecisionLevels(support, confirmation, breakout, stop, no_chase, target1=breakout, target2=no_chase),
+            is_intraday=False,
+        )
+    )
+
+    assert all("5분봉" not in condition for condition in result.no_buy_conditions)
+    assert any("다음 거래일" in condition for condition in result.no_buy_conditions)
+
+
+def test_price_evidence_deduplicates_breakout_target1_and_no_chase_target2_conflict():
+    support = PriceEvidence("핵심 지지선", 100, ("테스트",))
+    confirmation = PriceEvidence("매수 확인선", 105, ("테스트",))
+    breakout = PriceEvidence("돌파선", 120, ("최근 5일 고점",))
+    stop = PriceEvidence("손절/방어선", 90, ("테스트",))
+    no_chase = PriceEvidence("추격 금지선", 130, ("볼린저밴드 상단",))
+    target2 = PriceEvidence("신규매수 기준 2차 목표", 130, ("볼린저밴드 상단",))
+    result = evaluate_decision(
+        DecisionContext(
+            current_price=103,
+            levels=DecisionLevels(support, confirmation, breakout, stop, no_chase, target1=breakout, target2=target2),
+            is_intraday=False,
+        )
+    )
+    summaries = [item.summary() for item in result.price_evidence]
+
+    assert sum("돌파선" in summary for summary in summaries) == 1
+    assert not any("신규매수 기준 2차 목표 130원" in summary for summary in summaries)

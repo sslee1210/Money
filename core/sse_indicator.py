@@ -19,6 +19,8 @@ SSE_VERDICT_PRIORITY = {
     "분석 중단": 6,
 }
 
+REQUIRED_OHLCV_COLUMNS = ("Open", "High", "Low", "Close", "Volume", "TradeValue")
+
 
 @dataclass(frozen=True)
 class SSEEvidence:
@@ -53,7 +55,13 @@ class SSEResult:
 
 
 def add_sse_columns(frame: pd.DataFrame) -> pd.DataFrame:
-    """Add SSE raw math columns from standard OHLCV inputs."""
+    """Add SSE raw math columns from standard OHLCV inputs.
+
+    SSE does not add the finished outputs of MA, Bollinger, and Ichimoku.
+    It rebuilds a synthetic equilibrium line from the raw principles:
+    close averages, rolling standard deviation, rolling high/low midpoints,
+    average gaps, high/low balance gaps, and an Ichimoku-style raw cloud thickness.
+    """
 
     _validate_ohlcv_frame(frame)
     out = frame.copy()
@@ -65,10 +73,17 @@ def add_sse_columns(frame: pd.DataFrame) -> pd.DataFrame:
     out["SSE_MA60"] = close.rolling(60).mean()
     out["SSE_MA120"] = close.rolling(120).mean()
     out["SSE_MA240"] = close.rolling(240).mean()
+    out["SSE_MEAN20"] = close.rolling(20).mean()
     out["SSE_STD20"] = close.rolling(20).std()
     out["SSE_MID9"] = (high.rolling(9).max() + low.rolling(9).min()) / 2
     out["SSE_MID26"] = (high.rolling(26).max() + low.rolling(26).min()) / 2
     out["SSE_MID52"] = (high.rolling(52).max() + low.rolling(52).min()) / 2
+
+    out["SSE_MA_GAP"] = (out["SSE_MA20"] - out["SSE_MA60"]).abs()
+    out["SSE_BALANCE_GAP"] = (out["SSE_MID26"] - out["SSE_MID52"]).abs()
+    out["SSE_CLOUD_SPAN1_RAW"] = (out["SSE_MID9"] + out["SSE_MID26"]) / 2
+    out["SSE_CLOUD_SPAN2_RAW"] = out["SSE_MID52"]
+    out["SSE_CLOUD_THICKNESS"] = (out["SSE_CLOUD_SPAN1_RAW"] - out["SSE_CLOUD_SPAN2_RAW"]).abs()
 
     out["SSE_BASE"] = (
         0.35 * out["SSE_MA20"]
@@ -79,8 +94,8 @@ def add_sse_columns(frame: pd.DataFrame) -> pd.DataFrame:
     )
     out["SSE_VOLATILITY"] = (
         0.50 * out["SSE_STD20"]
-        + 0.25 * (out["SSE_MID26"] - out["SSE_MID52"]).abs()
-        + 0.25 * (out["SSE_MA20"] - out["SSE_MA60"]).abs()
+        + 0.25 * out["SSE_BALANCE_GAP"]
+        + 0.25 * out["SSE_MA_GAP"]
     )
     out["SSE_UPPER"] = out["SSE_BASE"] + SSE_BAND_MULTIPLIER * out["SSE_VOLATILITY"]
     out["SSE_LOWER"] = out["SSE_BASE"] - SSE_BAND_MULTIPLIER * out["SSE_VOLATILITY"]
@@ -177,13 +192,17 @@ def calculate_sse_indicator(
         errors = validate_sse_levels(levels)
         if not _is_finite(effective_price) or effective_price <= 0:
             errors.append("현재가 산정 불가")
+
         intraday_entry_confirmed = True
         if is_intraday:
             intraday_entry_confirmed = _has_intraday_close_condition(minute3_ind, minute5_ind, levels.entry)
         if is_intraday and not intraday_entry_confirmed:
             warnings.append("장중 SSE 진입은 3분봉 또는 5분봉 종가가 SSE_ENTRY 이상에서 유지될 때만 유효")
+        if _is_finite(levels.rr1) and levels.rr1 < SSE_BUY_RR_MIN:
+            warnings.append(f"SSE_RR1 {levels.rr1:.2f}배로 신규매수 기준 {SSE_BUY_RR_MIN:.2f}배 미만")
         if _is_finite(levels.rr2) and _is_finite(levels.rr1) and levels.rr2 <= levels.rr1:
             warnings.append("SSE_RR2 <= SSE_RR1")
+
         verdict = "분석 중단" if errors else classify_sse_verdict(levels, effective_price, is_intraday)
         if verdict in {"사라", "조건부로 사라"} and is_intraday and not intraday_entry_confirmed:
             verdict = "기다려라"
@@ -230,7 +249,7 @@ def _levels_from_frame(frame: pd.DataFrame, current_price: float | None) -> SSEL
 
 def _select_target1(frame: pd.DataFrame, current_price: float | None, entry: float) -> float:
     row = frame.iloc[-1]
-    floor = max(v for v in [_finite(current_price), entry] if _is_finite(v)) if any(_is_finite(v) for v in [_finite(current_price), entry]) else np.nan
+    floor = _max_finite(_finite(current_price), entry)
     candidates = [
         _finite(row.get("SSE_TARGET1_RAW")),
         _finite(row.get("SSE_RECENT5_HIGH")),
@@ -244,8 +263,7 @@ def _select_target1(frame: pd.DataFrame, current_price: float | None, entry: flo
 
 def _select_target2(frame: pd.DataFrame, current_price: float | None, target1: float) -> float:
     row = frame.iloc[-1]
-    floor_values = [_finite(current_price), target1]
-    floor = max(v for v in floor_values if _is_finite(v)) if any(_is_finite(v) for v in floor_values) else np.nan
+    floor = _max_finite(_finite(current_price), target1)
     mid52 = _finite(row.get("SSE_MID52"))
     volatility = _finite(row.get("SSE_VOLATILITY"))
     candidates = [
@@ -260,7 +278,7 @@ def _select_target2(frame: pd.DataFrame, current_price: float | None, target1: f
 
 
 def _nearest_conservative_above(candidates: list[float], floor: float, fallback: float) -> float:
-    valid = [v for v in candidates if _is_finite(v) and (_is_finite(floor) is False or v > floor)]
+    valid = [v for v in candidates if _is_finite(v) and (not _is_finite(floor) or v > floor)]
     if valid:
         return min(valid)
     return fallback
@@ -272,10 +290,13 @@ def _build_evidence(frame: pd.DataFrame, levels: SSELevels) -> tuple[SSEEvidence
     row = frame.iloc[-1]
     return (
         SSEEvidence("SSE 기준선", levels.base, "0.35*MA20 + 0.20*MA60 + 0.20*MID26 + 0.15*MID52 + 0.10*MID9", "종가 평균 원리와 고저 중간값 원리를 재조합"),
+        SSEEvidence("SSE 평균 이격", _finite(row.get("SSE_MA_GAP")), "abs(MA20-MA60)", "단기/중기 종가 평균 이격 구조"),
+        SSEEvidence("SSE 고저 균형 이격", _finite(row.get("SSE_BALANCE_GAP")), "abs(MID26-MID52)", "중기/장기 고저 균형 이격 구조"),
+        SSEEvidence("SSE 구름 두께", _finite(row.get("SSE_CLOUD_THICKNESS")), "abs(((MID9+MID26)/2)-MID52)", "일목 시간 구조를 원천값으로 재구성한 구름 두께"),
         SSEEvidence("SSE 통합 변동성", _finite(row.get("SSE_VOLATILITY")), "0.50*STD20 + 0.25*abs(MID26-MID52) + 0.25*abs(MA20-MA60)", "표준편차, 고저 균형 간격, 평균선 간격을 통합"),
         SSEEvidence("SSE 상단선", levels.upper, "SSE_BASE + 1.8*SSE_VOLATILITY", "통합 변동성 기준 상단 범위"),
         SSEEvidence("SSE 하단선", levels.lower, "SSE_BASE - 1.8*SSE_VOLATILITY", "통합 변동성 기준 하단 범위"),
-        SSEEvidence("SSE 압력값", levels.pressure, "(Close - SSE_BASE) / SSE_VOLATILITY", "현재 가격의 기준선 대비 압력"),
+        SSEEvidence("SSE 압력값", levels.pressure, "(현재가 또는 Close - SSE_BASE) / SSE_VOLATILITY", "현재 가격의 기준선 대비 압력"),
         SSEEvidence("예상 진입가", levels.entry, "SSE_BASE + 0.25*SSE_VOLATILITY", "기준선 회복 후 조건부 진입 기준"),
         SSEEvidence("예상 손절가", levels.stop, "min(SSE_BASE - 0.75*SSE_VOLATILITY, MID26, MID52, 최근20일저점)", "보수적 방어 기준"),
         SSEEvidence("1차 익절가", levels.target1, "SSE_TARGET1 후보군 중 현재가/진입가 위의 보수적 저항", "가까운 상단 저항 우선"),
@@ -296,8 +317,7 @@ def _has_intraday_close_condition(minute3_ind: pd.DataFrame | None, minute5_ind:
 
 
 def _validate_ohlcv_frame(frame: pd.DataFrame) -> None:
-    required = ["Open", "High", "Low", "Close", "Volume", "TradeValue"]
-    missing = [column for column in required if column not in frame.columns]
+    missing = [column for column in REQUIRED_OHLCV_COLUMNS if column not in frame.columns]
     if "DateTime" not in frame.columns and "Date" not in frame.columns:
         missing.append("DateTime")
     if missing:
@@ -315,6 +335,11 @@ def _volatility_from_levels(levels: SSELevels) -> float:
     if _is_finite(levels.base) and _is_finite(levels.lower):
         return (levels.base - levels.lower) / SSE_BAND_MULTIPLIER
     return float("nan")
+
+
+def _max_finite(*values: float) -> float:
+    finite_values = [value for value in values if _is_finite(value)]
+    return max(finite_values) if finite_values else float("nan")
 
 
 def _finite(value: Any) -> float:
