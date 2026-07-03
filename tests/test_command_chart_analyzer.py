@@ -9,6 +9,7 @@ import command_chart_analyzer
 from core.decision_engine import DecisionContext, DecisionLevels, PriceEvidence, evaluate_decision
 from core.indicators import calculate_standard_indicators, indicators_valid, intraday_indicators_valid
 from core.qa import validate_command_report
+from core.sse_indicator import SSELevels, SSEOpportunity, SSEResult, SSEEvidence
 from kiwoom.candles import ticks_to_ohlcv
 from kiwoom.models import Quote, Tick
 from kiwoom.provider import KiwoomDataError, KiwoomDataProvider
@@ -476,6 +477,86 @@ def test_price_source_infers_realtime_fid_without_quote_time():
     assert price_source.status_name == "키움 실시간 체결 보정"
     assert price_source.is_realtime
     assert "TR 기준가" not in price_source.note
+
+
+def test_render_sse_section_prints_opportunity_block_without_confirmed_breakout_words():
+    result = SSEResult(
+        verdict="기다려라",
+        levels=SSELevels(
+            base=100.0,
+            upper=118.0,
+            lower=82.0,
+            pressure=0.52,
+            entry=103.0,
+            stop=92.0,
+            target1=118.0,
+            target2=130.0,
+            no_chase=125.0,
+            rr1=1.36,
+            rr2=2.45,
+        ),
+        evidence=(
+            SSEEvidence("SSE 기준선", 100.0, "formula", "reason"),
+            SSEEvidence("SSE 기회 점수", 72.0, "old formula", "old mixed reason"),
+            SSEEvidence("SSE 기회 경고", 0.0, "old warning", "old mixed warning"),
+        ),
+        warnings=(),
+        blocking_errors=(),
+        opportunity=SSEOpportunity(
+            score=72.0,
+            grade="B급 후보",
+            setup="BASE_RECLAIM",
+            reasons=(
+                "현재가가 SSE 예상 진입가 이상으로 회복",
+                "SSE 압력값 0.52: 초기 회복 우수 구간",
+            ),
+            warnings=(),
+        ),
+    )
+
+    section = command_chart_analyzer.render_sse_section(result)
+
+    assert "SSE 기회 점수: 72.0점" in section
+    assert "SSE 기회 등급: B급 후보" in section
+    assert "SSE 셋업: BASE_RECLAIM" in section
+    assert "SSE 기회 사유:" in section
+    assert "* 현재가가 SSE 예상 진입가 이상으로 회복" in section
+    assert "SSE 기회 경고:" in section
+    assert "* 경고 없음" in section
+    assert "* SSE 기회 점수 72.00:" not in section
+    assert "* SSE 기회 경고 0.00:" not in section
+    assert "확정 돌파" not in section
+    assert "일봉 돌파 확정" not in section
+    assert "돌파 확인 완료" not in section
+
+
+def test_render_sse_section_handles_missing_opportunity():
+    result = SSEResult(
+        verdict="분석 중단",
+        levels=SSELevels(
+            base=float("nan"),
+            upper=float("nan"),
+            lower=float("nan"),
+            pressure=float("nan"),
+            entry=float("nan"),
+            stop=float("nan"),
+            target1=float("nan"),
+            target2=float("nan"),
+            no_chase=float("nan"),
+            rr1=float("nan"),
+            rr2=float("nan"),
+        ),
+        evidence=(),
+        warnings=(),
+        blocking_errors=("SSE 계산 실패",),
+        opportunity=None,
+    )
+
+    section = command_chart_analyzer.render_sse_section(result)
+
+    assert "SSE 기회 점수: 계산 불가" in section
+    assert "SSE 기회 등급: 계산 불가" in section
+    assert "SSE 셋업: 계산 불가" in section
 
 
 def test_price_without_evidence_stops_analysis():

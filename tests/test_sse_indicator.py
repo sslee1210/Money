@@ -6,11 +6,13 @@ import pytest
 
 from core.decision_engine import DecisionContext, DecisionLevels, DecisionResult, PriceEvidence, evaluate_decision
 from core.sse_indicator import (
+    SSEOpportunity,
     SSELevels,
     SSEResult,
     add_sse_columns,
     calculate_sse_indicator,
     classify_sse_verdict,
+    latest_sse_levels,
     validate_sse_levels,
 )
 from command_chart_analyzer import apply_sse_safety_filter, render_sse_section
@@ -252,9 +254,10 @@ def test_sse_opportunity_score_is_soft_layer_and_keeps_safety_filter():
 
     assert result.verdict == "사지 마라"
     assert result.opportunity is not None
+    assert result.opportunity.grade in {"A급 후보", "B급 후보", "C급 관찰", "대기", "제외"}
     assert result.opportunity.grade == "제외"
     assert result.opportunity.setup == "OVERHEATED_HOLD_ONLY"
-    assert any(item.label == "SSE 기회 점수" for item in result.evidence)
+    assert not any(item.label in {"SSE 기회 점수", "SSE 기회 경고"} for item in result.evidence)
 
 
 def test_sse_opportunity_score_can_mark_watch_candidate_without_buy_override():
@@ -266,8 +269,30 @@ def test_sse_opportunity_score_can_mark_watch_candidate_without_buy_override():
     result = calculate_sse_indicator(daily, current_price=current_price, is_intraday=False)
 
     assert result.opportunity is not None
-    assert result.opportunity.score >= 0
+    assert result.opportunity.grade in {"A급 후보", "B급 후보", "C급 관찰", "대기", "제외"}
+    assert result.opportunity.score > 0
+    assert result.opportunity.reasons
     assert result.verdict in {"조건부로 사라", "사지 마라", "기다려라", "보유하라"}
-    assert "사라" not in result.opportunity.grade
+
+
+def test_target_fallback_keeps_target_structure_valid():
+    daily = _frame()
+    base_levels = latest_sse_levels(daily)
+    current_price = float(base_levels.target1 + base_levels.target2 + 1000)
+
+    result = calculate_sse_indicator(daily, current_price=current_price, is_intraday=False)
+
+    assert result.levels.target1 > result.levels.entry
+    assert result.levels.target2 > result.levels.target1
+    assert validate_sse_levels(result.levels) == []
+
+
+def test_latest_sse_levels_recalculates_stale_sse_columns():
+    stale = _frame()
+    stale["SSE_BASE"] = -1.0
+
+    levels = latest_sse_levels(stale)
+
+    assert levels.base > 0
 
 

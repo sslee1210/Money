@@ -130,7 +130,7 @@ def add_sse_columns(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def latest_sse_levels(frame: pd.DataFrame) -> SSELevels:
-    sse_frame = frame if "SSE_BASE" in frame.columns else add_sse_columns(frame)
+    sse_frame = add_sse_columns(frame)
     if sse_frame.empty:
         return _empty_levels()
     row = sse_frame.iloc[-1]
@@ -470,6 +470,7 @@ def _levels_from_frame(frame: pd.DataFrame, current_price: float | None) -> SSEL
 def _select_target1(frame: pd.DataFrame, current_price: float | None, entry: float) -> float:
     row = frame.iloc[-1]
     floor = _max_finite(_finite(current_price), entry)
+    volatility = _finite(row.get("SSE_VOLATILITY"))
     candidates = [
         _finite(row.get("SSE_TARGET1_RAW")),
         _finite(row.get("SSE_RECENT5_HIGH")),
@@ -478,7 +479,10 @@ def _select_target1(frame: pd.DataFrame, current_price: float | None, entry: flo
         _finite(row.get("SSE_MA120")),
         _finite(row.get("SSE_MA240")),
     ]
-    return _nearest_conservative_above(candidates, floor, _finite(row.get("SSE_TARGET1_RAW")))
+    fallback = _finite(row.get("SSE_TARGET1_RAW"))
+    if _is_finite(floor) and (not _is_finite(fallback) or fallback <= floor):
+        fallback = floor + volatility if _is_finite(volatility) and volatility > 0 else floor * 1.01
+    return _nearest_conservative_above(candidates, floor, fallback)
 
 
 def _select_target2(frame: pd.DataFrame, current_price: float | None, target1: float) -> float:
@@ -526,14 +530,7 @@ def _build_evidence(frame: pd.DataFrame, levels: SSELevels, opportunity: SSEOppo
         SSEEvidence("2차 익절가", levels.target2, "SSE_TARGET2 후보군 중 1차 목표 위의 보수적 저항", "2차 목표 구조 검증"),
         SSEEvidence("추격 금지선", levels.no_chase, "SSE_BASE + 1.50*SSE_VOLATILITY", "과열 추격 금지 기준"),
     )
-    if opportunity is None:
-        return evidence
-    opportunity_reason = "; ".join(opportunity.reasons) if opportunity.reasons else "우수 셋업 근거 부족"
-    opportunity_warning = "; ".join(opportunity.warnings) if opportunity.warnings else "경고 없음"
-    return evidence + (
-        SSEEvidence("SSE 기회 점수", opportunity.score, "pressure + reclaim + compression + volume + RR soft score", f"{opportunity.grade} / {opportunity.setup}: {opportunity_reason}"),
-        SSEEvidence("SSE 기회 경고", 0.0, "soft warnings only; safety filter unchanged", opportunity_warning),
-    )
+    return evidence
 
 
 

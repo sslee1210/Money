@@ -564,8 +564,10 @@ def render_sse_section(sse_result: SSEResult) -> str:
     evidence_lines = "\n".join(
         f"* {item.label} {format_sse_value(item.value)}: {item.formula} - {item.reason}"
         for item in sse_result.evidence
+        if item.label not in {"SSE 기회 점수", "SSE 기회 경고"}
     )
     warning_lines = "\n".join(f"* {warning}" for warning in sse_result.warnings) if sse_result.warnings else "* 경고 없음"
+    opportunity_block = render_sse_opportunity_block(sse_result)
     return f"""## SSE Indicator 분석
 
 SSE 기준선: {format_sse_price(levels.base)}
@@ -584,6 +586,8 @@ SSE 압력값: {format_sse_number(levels.pressure)}
 
 SSE 최종 판정: {sse_result.verdict}
 
+{opportunity_block}
+
 산출 근거:
 
 {evidence_lines}
@@ -592,6 +596,32 @@ SSE 경고:
 
 {warning_lines}
 """
+
+
+def render_sse_opportunity_block(sse_result: SSEResult) -> str:
+    opportunity = sse_result.opportunity
+    if opportunity is None:
+        return """SSE 기회 점수: 계산 불가
+SSE 기회 등급: 계산 불가
+SSE 셋업: 계산 불가
+
+SSE 기회 사유:
+* 계산 불가
+
+SSE 기회 경고:
+* 경고 없음"""
+
+    reason_lines = "\n".join(f"* {reason}" for reason in opportunity.reasons) if opportunity.reasons else "* 우수 셋업 근거 부족"
+    warning_lines = "\n".join(f"* {warning}" for warning in opportunity.warnings) if opportunity.warnings else "* 경고 없음"
+    return f"""SSE 기회 점수: {opportunity.score:.1f}점
+SSE 기회 등급: {opportunity.grade}
+SSE 셋업: {opportunity.setup}
+
+SSE 기회 사유:
+{reason_lines}
+
+SSE 기회 경고:
+{warning_lines}"""
 
 
 def format_sse_number(value: float | None) -> str:
