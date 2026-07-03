@@ -20,6 +20,20 @@ CACHE_DIR = ROOT / "data" / "cache"
 TICKER_CACHE = CACHE_DIR / "krx_tickers.csv"
 KST = ZoneInfo("Asia/Seoul")
 
+KNOWN_KRX_TICKERS = [
+    {"code": "005930", "name": "삼성전자", "market": "KOSPI"},
+    {"code": "000660", "name": "SK하이닉스", "market": "KOSPI"},
+    {"code": "012450", "name": "한화에어로스페이스", "market": "KOSPI"},
+    {"code": "196170", "name": "알테오젠", "market": "KOSDAQ"},
+    {"code": "247540", "name": "에코프로비엠", "market": "KOSDAQ"},
+    {"code": "042700", "name": "한미반도체", "market": "KOSPI"},
+    {"code": "005380", "name": "현대차", "market": "KOSPI"},
+    {"code": "010140", "name": "삼성중공업", "market": "KOSPI"},
+    {"code": "034020", "name": "두산에너빌리티", "market": "KOSPI"},
+    {"code": "267260", "name": "HD현대일렉트릭", "market": "KOSPI"},
+    {"code": "033100", "name": "제룡전기", "market": "KOSDAQ"},
+]
+
 
 STOP_WORDS = {
     "분석",
@@ -100,34 +114,36 @@ def load_krx_tickers() -> pd.DataFrame:
         except Exception:
             pass
 
-    rows: list[dict[str, str]] = []
+    rows: list[dict[str, str]] = list(KNOWN_KRX_TICKERS)
     try:
-        from pykrx import stock
+        with analyze_stock.suppress_external_output():
+            from pykrx import stock
 
-        today = datetime.now(KST).strftime("%Y%m%d")
-        for market in ("KOSPI", "KOSDAQ", "KONEX"):
-            for code in stock.get_market_ticker_list(today, market=market):
-                name = stock.get_market_ticker_name(code)
-                if name:
-                    rows.append({"code": str(code).zfill(6), "name": str(name), "market": market})
+            today = datetime.now(KST).strftime("%Y%m%d")
+            for market in ("KOSPI", "KOSDAQ", "KONEX"):
+                for code in stock.get_market_ticker_list(today, market=market):
+                    name = stock.get_market_ticker_name(code)
+                    if name:
+                        rows.append({"code": str(code).zfill(6), "name": str(name), "market": market})
     except Exception:
-        rows = []
+        rows = list(KNOWN_KRX_TICKERS)
 
-    if not rows:
+    if len(rows) == len(KNOWN_KRX_TICKERS):
         try:
-            import FinanceDataReader as fdr
+            with analyze_stock.suppress_external_output():
+                import FinanceDataReader as fdr
 
-            listing = fdr.StockListing("KRX")
-            code_col = "Code" if "Code" in listing.columns else "Symbol"
-            name_col = "Name" if "Name" in listing.columns else "Name"
-            market_col = "Market" if "Market" in listing.columns else None
-            for _, row in listing.iterrows():
-                code = str(row.get(code_col, "")).zfill(6)
-                name = str(row.get(name_col, "")).strip()
-                if re.fullmatch(r"\d{6}", code) and name:
-                    rows.append({"code": code, "name": name, "market": str(row.get(market_col, "")) if market_col else ""})
+                listing = fdr.StockListing("KRX")
+                code_col = "Code" if "Code" in listing.columns else "Symbol"
+                name_col = "Name" if "Name" in listing.columns else "Name"
+                market_col = "Market" if "Market" in listing.columns else None
+                for _, row in listing.iterrows():
+                    code = str(row.get(code_col, "")).zfill(6)
+                    name = str(row.get(name_col, "")).strip()
+                    if re.fullmatch(r"\d{6}", code) and name:
+                        rows.append({"code": code, "name": name, "market": str(row.get(market_col, "")) if market_col else ""})
         except Exception:
-            rows = []
+            rows = list(KNOWN_KRX_TICKERS)
 
     df = pd.DataFrame(rows, columns=["code", "name", "market"]).drop_duplicates("code")
     if not df.empty:

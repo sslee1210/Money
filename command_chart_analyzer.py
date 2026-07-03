@@ -42,6 +42,7 @@ from kiwoom.provider import KiwoomDataError, KiwoomDataProvider
 
 
 KST = ZoneInfo("Asia/Seoul")
+DAILY_MIN_COMPLETED_ROWS = 240
 
 
 @dataclass(frozen=True)
@@ -123,11 +124,14 @@ def collect_daily_data(code: str, fallback_name: str | None, provider: KiwoomDat
     kiwoom_eligible = False
     if market != "US" and kiwoom_source.data is not None and not kiwoom_source.data.empty:
         kiwoom_close = _latest_close_from_frame(kiwoom_source.data, end_limit)
+        kiwoom_completed_rows = _completed_row_count(kiwoom_source.data, end_limit)
         if public_close is None:
             stop_precision = True
             validation_note = f"{validation_note}; 키움 일봉 단독 사용 금지: pykrx/FDR 기준 종가 없음"
         elif kiwoom_close is None:
             validation_note = f"{validation_note}; 키움 일봉 최신 완료 종가 산정 불가"
+        elif kiwoom_completed_rows < DAILY_MIN_COMPLETED_ROWS:
+            validation_note = f"{validation_note}; 키움 일봉 표본 부족({kiwoom_completed_rows}개, MA240 계산 불가)으로 대표 후보 제외"
         else:
             diff_pct = _pct_diff(kiwoom_close, public_close)
             if diff_pct > 3.0:
@@ -174,6 +178,12 @@ def _latest_close_from_frame(frame: pd.DataFrame, end_limit: date) -> float | No
     if data.empty:
         return None
     return finite(data.iloc[-1].get("Close"))
+
+
+def _completed_row_count(frame: pd.DataFrame, end_limit: date) -> int:
+    if frame is None or frame.empty:
+        return 0
+    return int(len(frame[frame.index.date <= end_limit]))
 
 
 def _public_reference_close(sources: list[SourceFrame], end_limit: date) -> float | None:

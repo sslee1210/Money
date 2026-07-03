@@ -424,6 +424,27 @@ def test_collect_daily_data_prefers_validated_kiwoom_daily(monkeypatch):
     assert not daily.stop_precision
 
 
+def test_collect_daily_data_excludes_short_kiwoom_daily_sample(monkeypatch):
+    public = _daily_frame()
+    kiwoom = public.tail(239).copy()
+    kiwoom["Close"] = kiwoom["Close"] + 50
+
+    class ShortKiwoomDailyProvider(MockProvider):
+        def get_daily_ohlcv(self, code: str, limit: int = 400) -> pd.DataFrame:
+            return kiwoom
+
+    monkeypatch.setattr(command_chart_analyzer, "detect_name_market", lambda code, name, end: ("삼성전자", "KOSPI", ".KS"))
+    monkeypatch.setattr(command_chart_analyzer, "load_pykrx", lambda code, start, end: command_chart_analyzer.SourceFrame("pykrx", public))
+    monkeypatch.setattr(command_chart_analyzer, "load_fdr", lambda code, start, end: command_chart_analyzer.SourceFrame("FinanceDataReader", public))
+    monkeypatch.setattr(command_chart_analyzer, "load_yfinance", lambda ticker, start, end, name="yfinance": command_chart_analyzer.SourceFrame(name, public))
+
+    daily = command_chart_analyzer.collect_daily_data("005930", "삼성전자", ShortKiwoomDailyProvider())
+
+    assert len(daily.frame) == len(public)
+    assert daily.frame.iloc[-1]["Close"] == public.iloc[-1]["Close"]
+    assert "키움 일봉 표본 부족" in daily.validation_note
+
+
 def test_collect_daily_data_excludes_intraday_incomplete_daily_candle(monkeypatch):
     public = _daily_frame()
     kiwoom = pd.concat(

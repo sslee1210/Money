@@ -120,6 +120,27 @@ def test_daily_candles_fall_back_when_bridge_returns_error_payload(monkeypatch):
     assert calls == ["http://127.0.0.1:8765/candles/daily", "http://127.0.0.1:8765/candles/005930"]
 
 
+def test_daily_candles_fall_back_to_stock_detail_candles(monkeypatch):
+    calls: list[str] = []
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append(url)
+        if url.endswith("/candles/daily") or url.endswith("/candles/005930"):
+            return FakeResponse({"error": "CommRqData failed: opt10081 result=-200"}, status_code=200)
+        assert url.endswith("/stock/005930")
+        return FakeResponse({"ok": True, "candles": [{"date": "2026-06-29", "close": 78500}]})
+
+    monkeypatch.setattr("kiwoom.client.requests.get", fake_get)
+    monkeypatch.setattr("kiwoom.client.time.sleep", lambda seconds: None)
+
+    candles = KiwoomBridgeClient("http://127.0.0.1:8765").get_daily_candles("005930")
+
+    assert candles == [{"date": "2026-06-29", "close": 78500}]
+    assert calls.count("http://127.0.0.1:8765/candles/daily") == 3
+    assert calls.count("http://127.0.0.1:8765/candles/005930") == 3
+    assert calls[-1] == "http://127.0.0.1:8765/stock/005930"
+
+
 def test_unsupported_endpoint_error_mentions_path(monkeypatch):
     def fake_get(url, params=None, timeout=None):
         return FakeResponse({"detail": "Not Found"}, status_code=404)

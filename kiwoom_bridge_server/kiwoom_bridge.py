@@ -1256,7 +1256,7 @@ def daily_candles_standard(code: str, limit: int = 80) -> Dict[str, Any]:
             'provider': 'Kiwoom OpenAPI+ opt10081',
             'updatedAt': now_iso(),
             'code': normalized_code,
-            'candles': controller.daily_candles(normalized_code, max(20, min(int(limit or 80), 240))),
+            'candles': controller.daily_candles(normalized_code, max(20, min(int(limit or 80), 500))),
         },
         90,
     )
@@ -1271,7 +1271,7 @@ def daily_candles(code: str, days: int = 80) -> Dict[str, Any]:
             'provider': 'Kiwoom OpenAPI+ opt10081',
             'updatedAt': now_iso(),
             'code': normalized_code,
-            'candles': controller.daily_candles(normalized_code, max(20, min(int(days or 80), 240))),
+            'candles': controller.daily_candles(normalized_code, max(20, min(int(days or 80), 500))),
         },
         90,
     )
