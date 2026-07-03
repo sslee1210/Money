@@ -22,6 +22,17 @@ def test_bridge_exposes_realtime_fid_diagnostics():
     assert "normalize_kiwoom_text" in text
 
 
+def test_bridge_quote_exposes_realtime_time_and_candle_sanity_flag():
+    text = (ROOT / "kiwoom_bridge_server" / "kiwoom_bridge.py").read_text(encoding="utf-8")
+
+    assert "realtime_quote = controller.quotes.get(normalized_code)" in text
+    assert "if realtime_quote:" in text
+    assert "'time': stock.get('time')" in text
+    assert "'time': realtime_quote.get('time')" in text
+    assert "candleComparable" in text
+    assert "candle_comparable" in text
+
+
 def test_kiwoom_only_bridge_records_ignored_real_types():
     text = (ROOT / "kiwoom_bridge_server" / "kiwoom_bridge_kiwoom_only.py").read_text(encoding="utf-8")
 

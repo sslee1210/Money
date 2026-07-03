@@ -48,8 +48,8 @@ class KiwoomDataProvider:
             timestamp=timestamp,
             source=str(raw.get("source") or "") or None,
             source_label=str(raw.get("sourceLabel") or raw.get("source_label") or "") or None,
-            is_realtime=bool(raw.get("isRealtime") or raw.get("is_realtime")),
-            is_current_tr=bool(raw.get("isCurrentTr") or raw.get("is_current_tr")),
+            is_realtime=_bool(raw.get("isRealtime", raw.get("is_realtime"))),
+            is_current_tr=_bool(raw.get("isCurrentTr", raw.get("is_current_tr"))),
             quote_time=str(raw.get("time") or raw.get("quote_time") or "") or None,
         )
 
@@ -102,3 +102,13 @@ def _number(value: Any) -> float | None:
         return abs(float(str(value).replace(",", "")))
     except Exception:
         return None
+
+
+def _bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)

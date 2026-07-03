@@ -169,7 +169,10 @@ def evaluate_decision(ctx: DecisionContext) -> DecisionResult:
             f"{format_price(levels.no_chase.price)} 이상에서는 추격 매수하지 마라.",
         )
     sell_conditions = (f"{format_price(levels.stop.price)} 이탈 시 팔아라 또는 비중 축소하라.",)
-    holder_conditions = (f"보유자는 {format_price(levels.support.price)} 이탈 시 추가매수 보류, {format_price(levels.stop.price)} 이탈 시 방어/손절하라.",)
+    if levels.support.price == levels.stop.price:
+        holder_conditions = (f"보유자는 {format_price(levels.stop.price)} 이탈 시 추가매수 보류 및 방어/손절하라.",)
+    else:
+        holder_conditions = (f"보유자는 {format_price(levels.support.price)} 이탈 시 추가매수 보류, {format_price(levels.stop.price)} 이탈 시 방어/손절하라.",)
     return DecisionResult(
         verdict=verdict,
         headline=headline,

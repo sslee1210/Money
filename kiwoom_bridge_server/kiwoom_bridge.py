@@ -1302,6 +1302,30 @@ def quote(code: str) -> Dict[str, Any]:
     normalized_code = clean_code(code)
 
     def build_quote() -> Dict[str, Any]:
+        controller.ensure_realtime_subscription(normalized_code)
+        realtime_quote = controller.quotes.get(normalized_code)
+        if realtime_quote:
+            trade_amount_million = realtime_quote.get('tradeAmountMillion')
+            return {
+                'code': normalized_code,
+                'name': realtime_quote.get('name') or controller._code_name(normalized_code),
+                'price': realtime_quote.get('price'),
+                'prev_close': None,
+                'open': None,
+                'high': None,
+                'low': None,
+                'volume': realtime_quote.get('volume'),
+                'trade_value': int(trade_amount_million or 0) * 1_000_000 if trade_amount_million is not None else None,
+                'timestamp': realtime_quote.get('updatedAt') or now_iso(),
+                'time': realtime_quote.get('time'),
+                'source': realtime_quote.get('source') or 'kiwoom-realtime-fid-stock-trade',
+                'sourceLabel': '실시간 FID',
+                'isCurrentTr': False,
+                'isRealtime': True,
+                'candleComparable': None,
+                'realtimeStatus': controller.realtime_registration_status(normalized_code),
+            }
+
         detail = controller.stock_detail(normalized_code, 20)
         stock = detail.get('stock') or {}
         candles = detail.get('candles') or []
@@ -1311,21 +1335,26 @@ def quote(code: str) -> Dict[str, Any]:
         is_realtime = bool(stock.get('isRealtime'))
         is_current_tr = bool(stock.get('isCurrentTr'))
         source_label = '실시간 FID' if is_realtime else '키움현재가TR' if is_current_tr else stock.get('sourceLabel') or '키움현재가TR'
+        price = stock.get('price') or latest.get('close')
+        latest_close = latest.get('close')
+        candle_comparable = bool(price and latest_close and abs(float(price) - float(latest_close)) / max(abs(float(price)), 1.0) <= 0.2)
         return {
             'code': normalized_code,
             'name': stock.get('name') or controller._code_name(normalized_code),
-            'price': stock.get('price') or latest.get('close'),
-            'prev_close': previous.get('close'),
-            'open': latest.get('open'),
-            'high': latest.get('high'),
-            'low': latest.get('low'),
+            'price': price,
+            'prev_close': previous.get('close') if candle_comparable else None,
+            'open': latest.get('open') if candle_comparable else None,
+            'high': latest.get('high') if candle_comparable else None,
+            'low': latest.get('low') if candle_comparable else None,
             'volume': stock.get('volume') or latest.get('volume'),
             'trade_value': int(trade_amount_million or 0) * 1_000_000 if trade_amount_million is not None else latest.get('trade_value'),
             'timestamp': detail.get('updatedAt') or stock.get('updatedAt') or now_iso(),
+            'time': stock.get('time'),
             'source': stock.get('source') or 'kiwoom-current-tr-opt10001',
             'sourceLabel': source_label,
             'isCurrentTr': is_current_tr,
             'isRealtime': is_realtime,
+            'candleComparable': candle_comparable,
             'realtimeStatus': detail.get('realtimeStatus'),
         }
 

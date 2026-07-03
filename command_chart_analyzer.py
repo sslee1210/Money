@@ -799,10 +799,12 @@ def _remove_legacy_reports(out_dir: Any, safe_name: str, code: str) -> None:
 def _price_source_info(quote: Any, is_intraday: bool) -> PriceSourceInfo:
     source_label = getattr(quote, "source_label", None) or getattr(quote, "source", None) or "키움"
     quote_time = getattr(quote, "quote_time", None)
-    is_realtime = bool(getattr(quote, "is_realtime", False))
+    source_text = f"{getattr(quote, 'source', '')} {source_label}".lower()
+    is_realtime = bool(getattr(quote, "is_realtime", False)) or "fid" in source_text or "realtime" in source_text or "실시간" in source_text
     is_current_tr = bool(getattr(quote, "is_current_tr", False))
-    if is_realtime and quote_time:
-        return PriceSourceInfo("실시간 현재가", "키움 실시간 체결 보정", f"키움 실시간 체결 FID 기준({source_label}, 체결시간 {quote_time})", True)
+    if is_realtime:
+        time_note = f", 체결시간 {quote_time}" if quote_time else ""
+        return PriceSourceInfo("실시간 현재가", "키움 실시간 체결 보정", f"키움 실시간 체결 FID 기준({source_label}{time_note})", True)
     if is_intraday:
         return PriceSourceInfo("키움 TR 기준가", "키움 장중 TR 보정", f"실시간 체결 FID가 아니라 키움 TR 기준가입니다({source_label}). 장중 실시간 호가/체결 화면과 차이가 날 수 있습니다.", False)
     if is_current_tr:
@@ -872,6 +874,8 @@ def _validate_quote(
     if high is not None and low is not None:
         if high < low:
             errors.append("키움 장중 고가/저가 범위가 비정상입니다")
+        elif current_price and (high < current_price * 0.8 or low > current_price * 1.2):
+            errors.append("키움 현재가와 장중 고가/저가 단위가 비정상적으로 불일치합니다")
         elif current_price and not (low <= current_price <= high):
             errors.append("키움 현재가가 장중 고가/저가 범위 밖입니다")
     return errors, warnings

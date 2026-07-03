@@ -127,6 +127,30 @@ class MissingMinuteEndpointClient:
         return []
 
 
+class StringBoolQuoteClient:
+    def get_quote(self, code: str):
+        return {
+            "code": code,
+            "name": "삼성전자",
+            "price": 311000,
+            "timestamp": "2026-06-30T10:00:00+09:00",
+            "source": "kiwoom-realtime-fid-stock-trade",
+            "sourceLabel": "실시간 FID",
+            "isRealtime": "true",
+            "isCurrentTr": "false",
+            "time": "100000",
+        }
+
+    def get_ticks(self, code: str, limit: int = 600):
+        return []
+
+    def get_minute_candles(self, code: str, interval: int = 1, limit: int = 240):
+        return []
+
+    def get_daily_candles(self, code: str, limit: int = 400):
+        return []
+
+
 def _report_path(base: Path, name: str = "삼성전자", code: str = "005930") -> Path:
     return base / f"{name}_{code}" / f"[{name}, {code}] 분석 보고서.md"
 
@@ -171,6 +195,16 @@ def test_kiwoom_provider_mock_returns_quote_and_minutes():
     minutes = provider.get_intraday_ohlcv("005930", 3)
     assert quote.price == 54500
     assert not minutes.empty
+
+
+def test_kiwoom_provider_parses_string_boolean_flags():
+    provider = KiwoomDataProvider(client=StringBoolQuoteClient())
+    quote = provider.get_quote("005930")
+
+    assert quote.is_realtime is True
+    assert quote.is_current_tr is False
+    assert quote.source_label == "실시간 FID"
+    assert quote.quote_time == "100000"
 
 
 def test_kiwoom_provider_preserves_minute_endpoint_failure_reason():
@@ -353,6 +387,19 @@ def test_no_chase_line_blocks_buy_even_with_good_rr():
     assert "추격 금지선 이상" in decision.headline
 
 
+def test_holder_condition_merges_same_support_and_stop_price():
+    levels = DecisionLevels(
+        support=PriceEvidence("핵심 지지선", 49000, ("볼린저밴드 하단",)),
+        confirmation=PriceEvidence("매수 확인선", 49300, ("3분봉 20이평선",)),
+        breakout=PriceEvidence("돌파선", 52000, ("최근 20일 고점",)),
+        stop=PriceEvidence("손절/방어선", 49000, ("볼린저밴드 하단",)),
+        no_chase=PriceEvidence("추격 금지선", 53200, ("볼린저밴드 상단",)),
+    )
+    decision = evaluate_decision(DecisionContext(current_price=49100, levels=levels, is_intraday=True))
+
+    assert decision.holder_conditions == ("보유자는 49,000원 이탈 시 추가매수 보류 및 방어/손절하라.",)
+
+
 def test_intraday_stale_quote_timestamp_stops_analysis():
     quote = Quote(
         code="005930",
@@ -392,6 +439,43 @@ def test_quote_price_outside_intraday_range_stops_analysis():
         now=datetime(2026, 6, 30, 10, 1),
     )
     assert any("범위 밖" in error for error in errors)
+
+
+def test_quote_price_range_unit_mismatch_stops_analysis():
+    quote = Quote(
+        code="005930",
+        name="삼성전자",
+        price=311000,
+        high=4340,
+        low=3155,
+        timestamp=datetime(2026, 6, 30, 10, 0),
+    )
+    errors, _warnings = command_chart_analyzer._validate_quote(
+        quote,
+        public_reference_close=311000,
+        current_price=311000,
+        is_intraday=True,
+        now=datetime(2026, 6, 30, 10, 1),
+    )
+    assert any("단위" in error for error in errors)
+
+
+def test_price_source_infers_realtime_fid_without_quote_time():
+    quote = Quote(
+        code="005930",
+        name="삼성전자",
+        price=311000,
+        timestamp=datetime(2026, 6, 30, 10, 0),
+        source="kiwoom-realtime-fid-stock-trade",
+        source_label="실시간 FID",
+        is_realtime=False,
+        quote_time=None,
+    )
+    price_source = command_chart_analyzer._price_source_info(quote, is_intraday=True)
+    assert price_source.label == "실시간 현재가"
+    assert price_source.status_name == "키움 실시간 체결 보정"
+    assert price_source.is_realtime
+    assert "TR 기준가" not in price_source.note
 
 
 def test_price_without_evidence_stops_analysis():
