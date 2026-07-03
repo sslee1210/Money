@@ -13,6 +13,7 @@ import urllib.request
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check the local Kiwoom bridge status.")
     parser.add_argument("--require-login", action="store_true", help="Return success only when /health reports login=true.")
+    parser.add_argument("--require-analysis", action="store_true", help="Return success only when analysis endpoints are available.")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
@@ -36,9 +37,15 @@ def main() -> int:
     if not args.quiet:
         ok = bool(health.get("ok"))
         provider = health.get("provider") or "unknown"
-        print(f"reachable=true ok={str(ok).lower()} login={str(login).lower()} provider={provider}")
+        compatible, missing = _analysis_compatible(base_url)
+        detail = "compatible=true" if compatible else f"compatible=false missing={','.join(missing)}"
+        print(f"reachable=true ok={str(ok).lower()} login={str(login).lower()} provider={provider} {detail}")
     if args.require_login and not login:
         return 3
+    if args.require_analysis:
+        compatible, _missing = _analysis_compatible(base_url)
+        if not compatible:
+            return 4
     return 0
 
 
@@ -61,6 +68,33 @@ def _health(base_url: str) -> dict | None:
     except json.JSONDecodeError:
         return None
     return data if isinstance(data, dict) else None
+
+
+def _analysis_compatible(base_url: str) -> tuple[bool, list[str]]:
+    paths = _openapi_paths(base_url)
+    if not paths:
+        return False, ["/openapi.json"]
+    requirements = {
+        "quote": ("/quote", "/stock/{code}"),
+        "minute": ("/candles/minute",),
+        "daily": ("/candles/daily", "/candles/{code}"),
+    }
+    missing = [label for label, alternatives in requirements.items() if not any(path in paths for path in alternatives)]
+    return not missing, missing
+
+
+def _openapi_paths(base_url: str) -> set[str]:
+    try:
+        with urllib.request.urlopen(f"{base_url}/openapi.json", timeout=3) as response:
+            payload = response.read().decode("utf-8", errors="replace")
+    except (OSError, urllib.error.URLError):
+        return set()
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return set()
+    paths = data.get("paths") if isinstance(data, dict) else None
+    return set(paths) if isinstance(paths, dict) else set()
 
 
 if __name__ == "__main__":

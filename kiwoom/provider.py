@@ -71,13 +71,19 @@ class KiwoomDataProvider:
         return ticks
 
     def get_intraday_ohlcv(self, code: str, interval_minutes: int = 1, limit: int = 600) -> pd.DataFrame:
+        minute_error: Exception | None = None
         try:
             rows = self.client.get_minute_candles(code, interval=interval_minutes, limit=limit)
             frame = normalize_ohlcv_frame(rows)
-        except Exception:
+        except Exception as exc:
+            minute_error = exc
             frame = pd.DataFrame()
         if frame.empty:
-            frame = ticks_to_ohlcv(self.get_ticks(code, limit=limit), interval_minutes=interval_minutes)
+            try:
+                frame = ticks_to_ohlcv(self.get_ticks(code, limit=limit), interval_minutes=interval_minutes)
+            except Exception as tick_error:
+                reason = str(minute_error or tick_error)
+                raise KiwoomDataError(f"분봉 생성 실패: {reason}; /candles/minute endpoint 또는 /ticks fallback 확인 필요") from tick_error
         if frame.empty:
             raise KiwoomDataError("분봉 생성 실패")
         return frame

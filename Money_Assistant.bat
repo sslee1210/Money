@@ -98,6 +98,16 @@ exit /b 1
 :kiwoom_login_ready
 echo [kiwoom] Kiwoom login is ready. Realtime correction will be attempted.
 ".venv\Scripts\python.exe" -B kiwoom_bridge_status.py
+".venv\Scripts\python.exe" -B kiwoom_bridge_status.py --require-analysis --quiet >nul 2>nul
+if errorlevel 1 (
+    echo.
+    echo [error] Kiwoom bridge is reachable, but it is not compatible with Money analysis.
+    echo [error] Required analysis endpoint is missing. Close the old bridge window and run Money_Assistant.bat again.
+    echo [error] Money expects the bridge in: %~dp0kiwoom_bridge_server
+    ".venv\Scripts\python.exe" -B kiwoom_bridge_status.py
+    pause
+    exit /b 1
+)
 
 :kiwoom_bridge_checked
 

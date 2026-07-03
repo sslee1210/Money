@@ -50,8 +50,14 @@ class KiwoomBridgeClient:
     def _get(self, path: str, params: dict[str, Any]) -> Any:
         if not self.available:
             raise KiwoomConnectionError("KIWOOM_BRIDGE_URL is not configured")
-        response = requests.get(f"{self.base_url}{path}", params=params, timeout=self.timeout)
-        response.raise_for_status()
+        try:
+            response = requests.get(f"{self.base_url}{path}", params=params, timeout=self.timeout)
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            status_code = getattr(exc.response, "status_code", None) or getattr(response, "status_code", None)
+            if status_code == 404:
+                raise KiwoomConnectionError(f"키움 브릿지 endpoint 미지원: {path}") from exc
+            raise
         payload = response.json()
         if isinstance(payload, dict) and payload.get("error"):
             raise KiwoomConnectionError(str(payload["error"]))

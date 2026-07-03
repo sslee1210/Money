@@ -1196,6 +1196,37 @@ def stock_detail(code: str, candleDays: int = 80) -> Dict[str, Any]:
     return run_controller_call(lambda: controller.stock_detail(normalized_code, max(20, min(int(candleDays or 80), 160))), 90)
 
 
+@api.get('/quote')
+def quote(code: str) -> Dict[str, Any]:
+    normalized_code = clean_code(code)
+
+    def build_quote() -> Dict[str, Any]:
+        detail = controller.stock_detail(normalized_code, 20)
+        stock = detail.get('stock') or {}
+        candles = detail.get('candles') or []
+        latest = candles[-1] if candles else {}
+        previous = candles[-2] if len(candles) >= 2 else {}
+        trade_amount_million = stock.get('tradeAmountMillion')
+        return {
+            'code': normalized_code,
+            'name': stock.get('name') or controller._code_name(normalized_code),
+            'price': stock.get('price') or latest.get('close'),
+            'prev_close': previous.get('close'),
+            'open': latest.get('open'),
+            'high': latest.get('high'),
+            'low': latest.get('low'),
+            'volume': stock.get('volume') or latest.get('volume'),
+            'trade_value': int(trade_amount_million or 0) * 1_000_000 if trade_amount_million is not None else latest.get('trade_value'),
+            'timestamp': detail.get('updatedAt') or stock.get('updatedAt') or now_iso(),
+            'source': stock.get('source') or 'kiwoom-current-tr-opt10001',
+            'sourceLabel': stock.get('sourceLabel') or '키움현재가TR',
+            'isCurrentTr': bool(stock.get('isCurrentTr')),
+            'isRealtime': bool(stock.get('isRealtime')),
+        }
+
+    return run_controller_call(build_quote, 90)
+
+
 @api.get('/candles/minute')
 def minute_candles(code: str, interval: int = 1, limit: int = 240) -> Dict[str, Any]:
     normalized_code = clean_code(code)
@@ -1216,6 +1247,21 @@ def minute_candles(code: str, interval: int = 1, limit: int = 240) -> Dict[str, 
     )
 
 
+@api.get('/candles/daily')
+def daily_candles_standard(code: str, limit: int = 80) -> Dict[str, Any]:
+    normalized_code = clean_code(code)
+    return run_controller_call(
+        lambda: {
+            'ok': True,
+            'provider': 'Kiwoom OpenAPI+ opt10081',
+            'updatedAt': now_iso(),
+            'code': normalized_code,
+            'candles': controller.daily_candles(normalized_code, max(20, min(int(limit or 80), 240))),
+        },
+        90,
+    )
+
+
 @api.get('/candles/{code}')
 def daily_candles(code: str, days: int = 80) -> Dict[str, Any]:
     normalized_code = clean_code(code)
@@ -1229,6 +1275,35 @@ def daily_candles(code: str, days: int = 80) -> Dict[str, Any]:
         },
         90,
     )
+
+
+@api.get('/ticks')
+def ticks(code: str, limit: int = 600) -> Dict[str, Any]:
+    normalized_code = clean_code(code)
+
+    def build_ticks() -> Dict[str, Any]:
+        quote = controller.quotes.get(normalized_code) or controller.current_quotes.get(normalized_code) or {}
+        price = int(quote.get('price') or 0)
+        volume = int(quote.get('tradeVolume') or quote.get('volume') or 0)
+        tick_rows: List[Dict[str, Any]] = []
+        if price > 0 and volume > 0:
+            tick_rows.append({
+                'timestamp': quote.get('updatedAt') or now_iso(),
+                'price': price,
+                'volume': volume,
+                'trade_value': price * volume,
+            })
+        return {
+            'ok': True,
+            'provider': 'Kiwoom OpenAPI+ realtime latest tick',
+            'updatedAt': now_iso(),
+            'code': normalized_code,
+            'limit': max(1, min(int(limit or 600), 5000)),
+            'ticks': tick_rows,
+            'note': '키움 OpenAPI+는 과거 체결 tick 배열을 직접 제공하지 않으므로 분봉 endpoint를 우선 사용한다.',
+        }
+
+    return run_controller_call(build_ticks, 30)
 
 
 @api.get('/screener')

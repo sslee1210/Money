@@ -113,6 +113,20 @@ class ShortMinuteProvider(MockProvider):
         return _minute_frame(5)
 
 
+class MissingMinuteEndpointClient:
+    def get_quote(self, code: str):
+        return {}
+
+    def get_ticks(self, code: str, limit: int = 600):
+        raise KiwoomDataError("키움 브릿지 endpoint 미지원: /ticks")
+
+    def get_minute_candles(self, code: str, interval: int = 1, limit: int = 240):
+        raise KiwoomDataError("키움 브릿지 endpoint 미지원: /candles/minute")
+
+    def get_daily_candles(self, code: str, limit: int = 400):
+        return []
+
+
 def _report_path(base: Path, name: str = "삼성전자", code: str = "005930") -> Path:
     return base / f"{name}_{code}" / f"[{name}, {code}] 분석 보고서.md"
 
@@ -157,6 +171,19 @@ def test_kiwoom_provider_mock_returns_quote_and_minutes():
     minutes = provider.get_intraday_ohlcv("005930", 3)
     assert quote.price == 54500
     assert not minutes.empty
+
+
+def test_kiwoom_provider_preserves_minute_endpoint_failure_reason():
+    provider = KiwoomDataProvider(client=MissingMinuteEndpointClient())
+
+    try:
+        provider.get_intraday_ohlcv("005930", 5)
+    except KiwoomDataError as exc:
+        message = str(exc)
+        assert "/candles/minute" in message
+        assert "endpoint" in message
+    else:
+        raise AssertionError("expected minute endpoint failure")
 
 
 def test_invalid_data_writes_only_qa_failure(tmp_path, monkeypatch):

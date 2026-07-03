@@ -37,6 +37,15 @@ python command_chart_analyzer.py 005930 삼성전자
 /candles/daily
 ```
 
+Money에 포함된 브릿지는 기존 화면용 endpoint도 함께 지원한다.
+
+```text
+/stock/{code}        # /quote fallback
+/candles/{code}      # /candles/daily fallback
+```
+
+분석 시작 전 `Money_Assistant.bat`은 `/openapi.json`을 확인해 `/candles/minute`와 quote/daily 호환 endpoint가 있는지 검사한다. 예전 브릿지가 같은 포트를 잡고 있어 분봉 endpoint가 없으면 프롬프트 실행 전 중단한다.
+
 공통 query:
 
 ```text
@@ -146,6 +155,8 @@ Schema:
 응답은 배열 자체여도 된다.
 
 분봉 endpoint가 비어 있으면 `/ticks`를 가져와 `ticks_to_ohlcv()`로 1분봉/3분봉/5분봉을 생성한다.
+
+현재 Money 브릿지는 `/candles/minute`를 우선 사용한다. `/ticks`는 최신 체결 snapshot만 제공될 수 있으므로 과거 체결 배열이 충분하지 않으면 fallback은 실패하며, 이때 정상 보고서는 저장하지 않는다.
 
 ## `/candles/daily` expected JSON schema
 

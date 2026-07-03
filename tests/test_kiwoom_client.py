@@ -118,3 +118,19 @@ def test_daily_candles_fall_back_when_bridge_returns_error_payload(monkeypatch):
 
     assert candles == [{"date": "2026-06-29", "close": 78500}]
     assert calls == ["http://127.0.0.1:8765/candles/daily", "http://127.0.0.1:8765/candles/005930"]
+
+
+def test_unsupported_endpoint_error_mentions_path(monkeypatch):
+    def fake_get(url, params=None, timeout=None):
+        return FakeResponse({"detail": "Not Found"}, status_code=404)
+
+    monkeypatch.setattr("kiwoom.client.requests.get", fake_get)
+
+    client = KiwoomBridgeClient("http://127.0.0.1:8765")
+    try:
+        client.get_minute_candles("005930", interval=5)
+    except Exception as exc:
+        assert "/candles/minute" in str(exc)
+        assert "endpoint 미지원" in str(exc)
+    else:
+        raise AssertionError("expected unsupported endpoint failure")
