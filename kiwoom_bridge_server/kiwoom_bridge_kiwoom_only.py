@@ -230,7 +230,7 @@ class KiwoomOnlyController(base.KiwoomController):
         return self._request_tr('amount_rank', 'opt10032', inputs, fields)
 
     def _on_receive_real_data(self, code, real_type, real_data) -> None:
-        if str(real_type) != '주식체결':
+        if not base.is_stock_trade_real_type(real_type):
             self._record_real_event(code, str(real_type), handled=False)
             return
 

@@ -52,6 +52,32 @@ def clean_code(value: str) -> str:
     return re.sub(r'[^0-9]', '', str(value or '')).zfill(6)[-6:]
 
 
+def normalize_kiwoom_text(value: Any) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+
+    candidates = [text]
+    if all(ord(char) <= 255 for char in text):
+        raw = bytes(ord(char) for char in text)
+        for encoding in ('cp949', 'euc-kr', 'utf-8'):
+            try:
+                decoded = raw.decode(encoding).strip()
+            except UnicodeDecodeError:
+                continue
+            if decoded and decoded not in candidates:
+                candidates.append(decoded)
+
+    for candidate in candidates:
+        if re.search(r'[가-힣]', candidate):
+            return candidate
+    return candidates[0]
+
+
+def is_stock_trade_real_type(value: Any) -> bool:
+    return normalize_kiwoom_text(value) == '주식체결'
+
+
 def to_number(value: Any) -> float:
     text = str(value or '').strip().replace(',', '').replace('+', '')
     text = text.replace('%', '')
@@ -122,6 +148,7 @@ class KiwoomController(QObject):
         self.last_real_raw_event_at: Optional[str] = None
         self.last_real_raw_code: Optional[str] = None
         self.last_real_raw_type: Optional[str] = None
+        self.last_real_type: Optional[str] = None
         self.real_event_count = 0
         self.ignored_real_event_count = 0
         self.registered_codes: List[str] = []
@@ -186,6 +213,7 @@ class KiwoomController(QObject):
             'lastRealRawEventAt': self.last_real_raw_event_at,
             'lastRealRawCode': self.last_real_raw_code,
             'lastRealRawType': self.last_real_raw_type,
+            'lastRealType': self.last_real_type,
             'realEventCount': self.real_event_count,
             'ignoredRealEventCount': self.ignored_real_event_count,
             'strictRealtimeOnly': STRICT_REALTIME_ONLY,
@@ -628,9 +656,11 @@ class KiwoomController(QObject):
         self._hydrate_master([normalized_code])
         realtime_registration = self.ensure_realtime_subscription(normalized_code)
         cached_quote = self.quotes.get(normalized_code) or self.current_quotes.get(normalized_code) or self.candidates.get(normalized_code)
-        quote = self._request_current_quote(normalized_code) or cached_quote or {}
+        current_quote = self._request_current_quote(normalized_code)
+        quote = self.quotes.get(normalized_code) or current_quote or cached_quote or {}
         if quote:
-            self.current_quotes[normalized_code] = quote
+            if quote.get('isCurrentTr'):
+                self.current_quotes[normalized_code] = quote
         stock = self._normalize_stock(normalized_code, quote) if quote else {
             'code': normalized_code,
             'name': self._code_name(normalized_code),
@@ -954,6 +984,7 @@ class KiwoomController(QObject):
             'lastRealRawEventAt': self.last_real_raw_event_at,
             'lastRealRawCode': self.last_real_raw_code,
             'lastRealRawType': self.last_real_raw_type,
+            'lastRealType': self.last_real_type,
             'realEventCount': self.real_event_count,
             'ignoredRealEventCount': self.ignored_real_event_count,
         }
@@ -962,6 +993,7 @@ class KiwoomController(QObject):
         self.last_real_raw_event_at = now_iso()
         self.last_real_raw_code = clean_code(code)
         self.last_real_raw_type = str(real_type or '')
+        self.last_real_type = normalize_kiwoom_text(real_type)
         if handled:
             self.real_event_count += 1
         else:
@@ -1048,7 +1080,7 @@ class KiwoomController(QObject):
                 self._tr_loop.quit()
 
     def _on_receive_real_data(self, code, real_type, real_data) -> None:
-        if str(real_type) != '주식체결':
+        if not is_stock_trade_real_type(real_type):
             self._record_real_event(code, str(real_type), handled=False)
             return
 
@@ -1276,6 +1308,9 @@ def quote(code: str) -> Dict[str, Any]:
         latest = candles[-1] if candles else {}
         previous = candles[-2] if len(candles) >= 2 else {}
         trade_amount_million = stock.get('tradeAmountMillion')
+        is_realtime = bool(stock.get('isRealtime'))
+        is_current_tr = bool(stock.get('isCurrentTr'))
+        source_label = '실시간 FID' if is_realtime else '키움현재가TR' if is_current_tr else stock.get('sourceLabel') or '키움현재가TR'
         return {
             'code': normalized_code,
             'name': stock.get('name') or controller._code_name(normalized_code),
@@ -1288,9 +1323,9 @@ def quote(code: str) -> Dict[str, Any]:
             'trade_value': int(trade_amount_million or 0) * 1_000_000 if trade_amount_million is not None else latest.get('trade_value'),
             'timestamp': detail.get('updatedAt') or stock.get('updatedAt') or now_iso(),
             'source': stock.get('source') or 'kiwoom-current-tr-opt10001',
-            'sourceLabel': stock.get('sourceLabel') or '키움현재가TR',
-            'isCurrentTr': bool(stock.get('isCurrentTr')),
-            'isRealtime': bool(stock.get('isRealtime')),
+            'sourceLabel': source_label,
+            'isCurrentTr': is_current_tr,
+            'isRealtime': is_realtime,
             'realtimeStatus': detail.get('realtimeStatus'),
         }
 

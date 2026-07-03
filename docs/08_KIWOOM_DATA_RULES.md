@@ -113,6 +113,7 @@ lastRealEventAt
 lastRealRawEventAt
 lastRealRawCode
 lastRealRawType
+lastRealType
 realEventCount
 ignoredRealEventCount
 realtimeRegistration
@@ -120,7 +121,9 @@ realtimeRegistration
 
 `lastRealRawEventAt`이 비어 있으면 키움 OpenAPI에서 브릿지로 실시간 이벤트 자체가 아직 들어오지 않은 상태다.
 
-`lastRealRawType`이 `주식체결`이 아니면 브릿지는 해당 이벤트를 가격 FID로 사용하지 않고 진단값에만 기록한다.
+`lastRealRawType`은 ActiveX에서 들어온 원본 이벤트 타입이고, `lastRealType`은 브릿지가 CP949/EUC-KR 가능성을 복원한 정규화 이벤트 타입이다.
+
+`lastRealType`이 `주식체결`이 아니면 브릿지는 해당 이벤트를 가격 FID로 사용하지 않고 진단값에만 기록한다.
 
 실시간 FID가 없더라도 TR 기준가와 분봉 OHLCV가 검증되면 분석은 가능하다. 다만 보고서에는 `키움 TR 기준가`로 표시하고, 실시간 체결 보정이 아님을 명확히 구분한다.
 
