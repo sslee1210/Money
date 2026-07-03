@@ -3590,7 +3590,7 @@ def save_qa_failure(out_dir: Path, safe_name: str, code: str, errors: str, draft
     body = f"# 보고서 QA 실패\n\n## 실패 사유\n\n{errors}\n"
     if draft:
         body += "\n## 생성 중단된 초안\n\n" + draft
-    qa_fail_path.write_text(body, encoding="utf-8")
+    qa_fail_path.write_text(body, encoding="utf-8-sig")
     return qa_fail_path
 
 
@@ -5805,8 +5805,8 @@ def run(code: str, fallback_name: str | None = None) -> str:
     qa_fail_path = out_dir / f"{safe_name}_{code}_보고서_QA실패.md"
     if qa_fail_path.exists():
         qa_fail_path.unlink()
-    md_path.write_text(final_report_md, encoding="utf-8")
-    html_path.write_text(html_from_markdown(final_report_md, f"{safe_name} {code} 매매타점 분석보고서"), encoding="utf-8")
+    md_path.write_text(final_report_md, encoding="utf-8-sig")
+    html_path.write_text(html_from_markdown(final_report_md, f"{safe_name} {code} 매매타점 분석보고서"), encoding="utf-8-sig")
 
     return console_output(safe_name, code, decision, reliability, out_dir, md_path, html_path, levels)
 

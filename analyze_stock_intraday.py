@@ -1999,8 +1999,8 @@ def run(code: str, fallback_name: str | None = None) -> str:
     qa_fail_path = out_dir / f"{safe_name}_{code}_보고서_QA실패.md"
     if qa_fail_path.exists():
         qa_fail_path.unlink()
-    md_path.write_text(final_report_md, encoding="utf-8")
-    html_path.write_text(html_from_markdown(final_report_md, f"{safe_name} {code} 매매타점 분석보고서"), encoding="utf-8")
+    md_path.write_text(final_report_md, encoding="utf-8-sig")
+    html_path.write_text(html_from_markdown(final_report_md, f"{safe_name} {code} 매매타점 분석보고서"), encoding="utf-8-sig")
 
     if market_open:
         if decision["현재가"] >= decision["종가유지확인선"]:

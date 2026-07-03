@@ -435,8 +435,8 @@ def analyze_command_chart(
     md_path, html_path, qa_path = _report_paths(out_dir, safe_name, code)
     _remove_legacy_reports(out_dir, safe_name, code)
     qa_path.unlink(missing_ok=True)
-    md_path.write_text(report, encoding="utf-8")
-    html_path.write_text(html_from_markdown(report, f"[{safe_name}, {code}] 분석 보고서"), encoding="utf-8")
+    md_path.write_text(report, encoding="utf-8-sig")
+    html_path.write_text(html_from_markdown(report, f"[{safe_name}, {code}] 분석 보고서"), encoding="utf-8-sig")
 
     return _console_summary(safe_name, code, current_price, decision, md_path, price_source)
 
@@ -821,7 +821,7 @@ def _stop_and_write_failure(stock_name: str, code: str, reasons: list[str]) -> s
     md_path.unlink(missing_ok=True)
     html_path.unlink(missing_ok=True)
     body = "\n".join(f"- {reason}" for reason in reasons) if reasons else "- 원인 미상"
-    qa_path.write_text(f"# [{safe_name}, {code}] 분석 실패 보고서\n\n최종판정: 분석 중단\n\n## 실패 사유\n\n{body}\n", encoding="utf-8")
+    qa_path.write_text(f"# [{safe_name}, {code}] 분석 실패 보고서\n\n최종판정: 분석 중단\n\n## 실패 사유\n\n{body}\n", encoding="utf-8-sig")
     return f"""[조건부 명령형 차트 분석 중단]
 
 종목: {safe_name} {code}
