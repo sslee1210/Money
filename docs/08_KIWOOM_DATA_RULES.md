@@ -94,6 +94,36 @@ code=종목코드
 
 `high`와 `low`가 있으면 현재가가 장중 고가/저가 범위 안에 있어야 한다.
 
+## TR 기준가와 실시간 FID 사용 원칙
+
+Money 분석기는 기준선 계산과 실시간 보정을 분리한다.
+
+```text
+TR/OHLCV: 일봉, 분봉, 현재가 snapshot으로 지지선·저항선·SSE 기준선을 계산한다.
+실시간 FID: 장중 체결 이벤트가 수신될 때 현재가·체결 흐름 보정에 사용한다.
+```
+
+`/quote` 또는 `/stock/{code}`가 호출되면 브릿지는 해당 종목이 실시간 등록 목록에 없을 경우 `SetRealReg`로 등록을 시도한다.
+
+브릿지 `/health`와 `/debug/{code}`는 아래 진단값을 제공한다.
+
+```text
+realtimeQuoteCount
+lastRealEventAt
+lastRealRawEventAt
+lastRealRawCode
+lastRealRawType
+realEventCount
+ignoredRealEventCount
+realtimeRegistration
+```
+
+`lastRealRawEventAt`이 비어 있으면 키움 OpenAPI에서 브릿지로 실시간 이벤트 자체가 아직 들어오지 않은 상태다.
+
+`lastRealRawType`이 `주식체결`이 아니면 브릿지는 해당 이벤트를 가격 FID로 사용하지 않고 진단값에만 기록한다.
+
+실시간 FID가 없더라도 TR 기준가와 분봉 OHLCV가 검증되면 분석은 가능하다. 다만 보고서에는 `키움 TR 기준가`로 표시하고, 실시간 체결 보정이 아님을 명확히 구분한다.
+
 ## `/ticks` expected JSON schema
 
 ```json

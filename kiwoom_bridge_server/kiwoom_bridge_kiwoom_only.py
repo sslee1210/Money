@@ -231,9 +231,11 @@ class KiwoomOnlyController(base.KiwoomController):
 
     def _on_receive_real_data(self, code, real_type, real_data) -> None:
         if str(real_type) != '주식체결':
+            self._record_real_event(code, str(real_type), handled=False)
             return
 
         code = base.clean_code(code)
+        self._record_real_event(code, str(real_type), handled=True)
         master = self.master.get(code, {})
         candidate = self.candidates.get(code, {})
         name = master.get('name') or candidate.get('name') or self._code_name(code)

@@ -119,6 +119,11 @@ class KiwoomController(QObject):
         self.last_candidate_refresh_at: Optional[str] = None
         self.last_current_quote_refresh_at: Optional[str] = None
         self.last_real_event_at: Optional[str] = None
+        self.last_real_raw_event_at: Optional[str] = None
+        self.last_real_raw_code: Optional[str] = None
+        self.last_real_raw_type: Optional[str] = None
+        self.real_event_count = 0
+        self.ignored_real_event_count = 0
         self.registered_codes: List[str] = []
         self.screens: List[str] = []
         # 주식체결 실시간 FID 수신값이다. 정규장 중에는 이 값이 최우선이다.
@@ -178,6 +183,11 @@ class KiwoomController(QObject):
             'lastCandidateRefreshAt': self.last_candidate_refresh_at,
             'lastCurrentQuoteRefreshAt': self.last_current_quote_refresh_at,
             'lastRealEventAt': self.last_real_event_at,
+            'lastRealRawEventAt': self.last_real_raw_event_at,
+            'lastRealRawCode': self.last_real_raw_code,
+            'lastRealRawType': self.last_real_raw_type,
+            'realEventCount': self.real_event_count,
+            'ignoredRealEventCount': self.ignored_real_event_count,
             'strictRealtimeOnly': STRICT_REALTIME_ONLY,
             'currentTrFallback': ALLOW_CURRENT_TR_FALLBACK,
             'exchangeType': EXCHANGE_TYPE,
@@ -616,6 +626,7 @@ class KiwoomController(QObject):
     def stock_detail(self, code: str, candle_days: int = 80) -> Dict[str, Any]:
         normalized_code = clean_code(code)
         self._hydrate_master([normalized_code])
+        realtime_registration = self.ensure_realtime_subscription(normalized_code)
         cached_quote = self.quotes.get(normalized_code) or self.current_quotes.get(normalized_code) or self.candidates.get(normalized_code)
         quote = self._request_current_quote(normalized_code) or cached_quote or {}
         if quote:
@@ -643,6 +654,8 @@ class KiwoomController(QObject):
             'financials': {'quarter': [], 'year': []},
             'peers': self.peer_rows(stock),
             'news': [],
+            'realtimeRegistration': realtime_registration,
+            'realtimeStatus': self.realtime_registration_status(normalized_code),
             'unavailable': ['뉴스', '상세 기업개요 일부', '재무제표'],
         }
 
@@ -679,6 +692,7 @@ class KiwoomController(QObject):
             'candidate': candidate,
             'currentTrQuote': current,
             'realtimeQuote': quote,
+            'realtimeRegistration': self.realtime_registration_status(normalized_code),
             'displayStock': display_stock,
             'amountTop10': amount_rows[:10],
             'volumeTop10': volume_rows[:10],
@@ -901,6 +915,58 @@ class KiwoomController(QObject):
             self.screens.append(screen)
             self.registered_codes.extend(chunk)
 
+    def ensure_realtime_subscription(self, code: str) -> Dict[str, Any]:
+        normalized_code = clean_code(code)
+        if not normalized_code or normalized_code == '000000':
+            return {'ok': False, 'code': normalized_code, 'reason': 'invalid code'}
+        if not self.login:
+            return {'ok': False, 'code': normalized_code, 'reason': 'not logged in'}
+        if normalized_code in self.registered_codes:
+            return {'ok': True, 'code': normalized_code, 'registered': True, 'alreadyRegistered': True}
+
+        self._hydrate_master([normalized_code])
+        screen = str(SCREEN_BASE + 80)
+        result = self.ocx.dynamicCall(
+            'SetRealReg(QString, QString, QString, QString)',
+            screen,
+            normalized_code,
+            REAL_FIDS,
+            '1' if self.registered_codes else '0',
+        )
+        ok = int(result or 0) == 0
+        if ok:
+            if screen not in self.screens:
+                self.screens.append(screen)
+            self.registered_codes.append(normalized_code)
+            self.last_error = None
+        else:
+            self.last_error = f'SetRealReg failed code={normalized_code} screen={screen} result={result}'
+        return {'ok': ok, 'code': normalized_code, 'registered': ok, 'screen': screen, 'result': int(result or 0)}
+
+    def realtime_registration_status(self, code: str) -> Dict[str, Any]:
+        normalized_code = clean_code(code)
+        return {
+            'code': normalized_code,
+            'registered': normalized_code in self.registered_codes,
+            'hasRealtimeQuote': normalized_code in self.quotes,
+            'hasCurrentTrQuote': normalized_code in self.current_quotes,
+            'lastRealEventAt': self.last_real_event_at,
+            'lastRealRawEventAt': self.last_real_raw_event_at,
+            'lastRealRawCode': self.last_real_raw_code,
+            'lastRealRawType': self.last_real_raw_type,
+            'realEventCount': self.real_event_count,
+            'ignoredRealEventCount': self.ignored_real_event_count,
+        }
+
+    def _record_real_event(self, code: str, real_type: str, handled: bool) -> None:
+        self.last_real_raw_event_at = now_iso()
+        self.last_real_raw_code = clean_code(code)
+        self.last_real_raw_type = str(real_type or '')
+        if handled:
+            self.real_event_count += 1
+        else:
+            self.ignored_real_event_count += 1
+
     def _normalize_stock(self, code: str, quote: Dict[str, Any]) -> Dict[str, Any]:
         master = self.master.get(code, {})
         candidate = self.candidates.get(code, {})
@@ -983,9 +1049,11 @@ class KiwoomController(QObject):
 
     def _on_receive_real_data(self, code, real_type, real_data) -> None:
         if str(real_type) != '주식체결':
+            self._record_real_event(code, str(real_type), handled=False)
             return
 
         code = clean_code(code)
+        self._record_real_event(code, str(real_type), handled=True)
         master = self.master.get(code, {})
         candidate = self.candidates.get(code, {})
         name = master.get('name') or candidate.get('name') or self._code_name(code)
@@ -1166,6 +1234,7 @@ def debug_code(code: str) -> Dict[str, Any]:
         'candidate': controller.candidates.get(normalized_code),
         'quote': controller.quotes.get(normalized_code),
         'currentTrQuote': controller.current_quotes.get(normalized_code),
+        'realtimeRegistration': controller.realtime_registration_status(normalized_code),
     }
 
 
@@ -1222,6 +1291,7 @@ def quote(code: str) -> Dict[str, Any]:
             'sourceLabel': stock.get('sourceLabel') or '키움현재가TR',
             'isCurrentTr': bool(stock.get('isCurrentTr')),
             'isRealtime': bool(stock.get('isRealtime')),
+            'realtimeStatus': detail.get('realtimeStatus'),
         }
 
     return run_controller_call(build_quote, 90)
