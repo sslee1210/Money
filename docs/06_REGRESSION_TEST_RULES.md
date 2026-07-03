@@ -167,6 +167,7 @@ python run_regression_tests.py --fixtures-only
 
 ```text
 test_outputs/regression_summary.md
+test_outputs/reports/
 ```
 
 ## 테스트 실패 시 처리

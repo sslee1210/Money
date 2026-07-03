@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import subprocess
 import sys
@@ -12,8 +13,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent
-REPORTS_DIR = ROOT / "reports"
 TEST_OUTPUTS_DIR = ROOT / "test_outputs"
+REPORTS_DIR = TEST_OUTPUTS_DIR / "reports"
 
 
 @dataclass
@@ -199,7 +200,9 @@ def run_one(case: TestCase, script_name: str, timeout: int) -> TestResult:
     script = ROOT / script_name
     result = TestResult(case=case, passed=False)
     cmd = [sys.executable, str(script), case.code, case.name]
-    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, timeout=timeout)
+    env = os.environ.copy()
+    env["MONEY_REPORTS_DIR"] = str(REPORTS_DIR)
+    proc = subprocess.run(cmd, cwd=str(ROOT), capture_output=True, text=True, timeout=timeout, env=env)
     result.stdout = proc.stdout
     result.stderr = proc.stderr
     if proc.returncode != 0:

@@ -3,8 +3,10 @@ from __future__ import annotations
 FINALIZED_STOCK_AGENT_VERSION = "2026-06-17-final"
 
 import argparse
+import contextlib
 import csv
 import math
+import os
 import re
 import sys
 import warnings
@@ -20,7 +22,29 @@ warnings.filterwarnings("ignore")
 
 
 ROOT = Path(__file__).resolve().parent
-REPORTS_DIR = ROOT / "reports"
+_reports_dir_env = os.getenv("MONEY_REPORTS_DIR")
+REPORTS_DIR = Path(_reports_dir_env) if _reports_dir_env else ROOT / "reports"
+if not REPORTS_DIR.is_absolute():
+    REPORTS_DIR = ROOT / REPORTS_DIR
+
+
+@contextlib.contextmanager
+def suppress_external_output():
+    """Silence noisy third-party libraries that write below Python stdout."""
+
+    with open(os.devnull, "w", encoding="utf-8") as devnull:
+        saved_stdout = os.dup(1)
+        saved_stderr = os.dup(2)
+        try:
+            os.dup2(devnull.fileno(), 1)
+            os.dup2(devnull.fileno(), 2)
+            with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                yield
+        finally:
+            os.dup2(saved_stdout, 1)
+            os.dup2(saved_stderr, 2)
+            os.close(saved_stdout)
+            os.close(saved_stderr)
 
 
 @dataclass
@@ -3594,9 +3618,9 @@ def normalize_ohlcv(df: pd.DataFrame, source: str) -> pd.DataFrame:
 
 def load_pykrx(code: str, start: date, end: date) -> SourceFrame:
     try:
-        from pykrx import stock
-
-        df = stock.get_market_ohlcv_by_date(ymd(start), ymd(end), code)
+        with suppress_external_output():
+            from pykrx import stock
+            df = stock.get_market_ohlcv_by_date(ymd(start), ymd(end), code)
         return SourceFrame("pykrx", normalize_ohlcv(df, "pykrx"))
     except Exception as e:
         return SourceFrame("pykrx", pd.DataFrame(), f"{type(e).__name__}: {e}")
@@ -3703,15 +3727,16 @@ def detect_name_market(code: str, fallback_name: str | None, end: date) -> tuple
     except Exception:
         pass
     try:
-        from pykrx import stock
+        with suppress_external_output():
+            from pykrx import stock
 
-        krx_name = stock.get_market_ticker_name(code)
-        if krx_name:
-            name = krx_name
-        for m, suffix in [("KOSDAQ", ".KQ"), ("KOSPI", ".KS")]:
-            tickers = stock.get_market_ticker_list(ymd(end), market=m)
-            if code in tickers:
-                return name, m, suffix
+            krx_name = stock.get_market_ticker_name(code)
+            if krx_name:
+                name = krx_name
+            for m, suffix in [("KOSDAQ", ".KQ"), ("KOSPI", ".KS")]:
+                tickers = stock.get_market_ticker_list(ymd(end), market=m)
+                if code in tickers:
+                    return name, m, suffix
     except Exception:
         pass
     return name, market, yf_suffix
@@ -4220,11 +4245,12 @@ def naver_investor_table(code: str) -> dict[str, Any]:
         errors.append(f"네이버 투자자별 매매동향 실패: {type(e).__name__}")
 
     try:
-        from pykrx import stock
+        with suppress_external_output():
+            from pykrx import stock
 
-        end = today_kst().date()
-        start = end - timedelta(days=21)
-        df = stock.get_market_trading_volume_by_date(ymd(start), ymd(end), code)
+            end = today_kst().date()
+            start = end - timedelta(days=21)
+            df = stock.get_market_trading_volume_by_date(ymd(start), ymd(end), code)
         if df is None or df.empty:
             raise ValueError("pykrx 투자자별 순매수 데이터 없음")
         recent = df.tail(5).copy()
@@ -4292,9 +4318,9 @@ def market_index_frame_is_valid(market: str, df: pd.DataFrame) -> bool:
 
 def load_kosdaq_index(start: date, end: date) -> SourceFrame:
     try:
-        from pykrx import stock
-
-        df = stock.get_index_ohlcv_by_date(ymd(start), ymd(end), "2001")
+        with suppress_external_output():
+            from pykrx import stock
+            df = stock.get_index_ohlcv_by_date(ymd(start), ymd(end), "2001")
         out = df.rename(columns={"시가": "Open", "고가": "High", "저가": "Low", "종가": "Close", "거래량": "Volume"})
         return SourceFrame("pykrx KOSDAQ", normalize_ohlcv(out, "pykrx KOSDAQ"))
     except Exception as e:
@@ -4309,10 +4335,11 @@ def load_krx_index_by_market(market: str, start: date, end: date) -> SourceFrame
         src.note = index_symbol
         return src
     try:
-        from pykrx import stock
+        with suppress_external_output():
+            from pykrx import stock
 
-        index_code = "1001" if market == "KOSPI" else "2001"
-        df = stock.get_index_ohlcv_by_date(ymd(start), ymd(end), index_code)
+            index_code = "1001" if market == "KOSPI" else "2001"
+            df = stock.get_index_ohlcv_by_date(ymd(start), ymd(end), index_code)
         out = df.rename(columns={"시가": "Open", "고가": "High", "저가": "Low", "종가": "Close", "거래량": "Volume"})
         name = "pykrx KOSPI" if market == "KOSPI" else "pykrx KOSDAQ"
         normalized = normalize_ohlcv(out, name)
