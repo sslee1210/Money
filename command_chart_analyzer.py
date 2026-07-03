@@ -184,6 +184,12 @@ def _latest_close_from_frame(frame: pd.DataFrame, end_limit: date) -> float | No
     return finite(data.iloc[-1].get("Close"))
 
 
+def _previous_close_from_frame(frame: pd.DataFrame) -> float | None:
+    if frame is None or frame.empty or len(frame) < 2:
+        return None
+    return finite(frame.iloc[-2].get("Close"))
+
+
 def _completed_row_count(frame: pd.DataFrame, end_limit: date) -> int:
     if frame is None or frame.empty:
         return 0
@@ -314,11 +320,13 @@ def analyze_command_chart(
     out_dir = REPORTS_DIR / f"{safe_name}_{code}"
     out_dir.mkdir(parents=True, exist_ok=True)
     public_close = finite(daily_data.frame.iloc[-1].get("Close")) if not daily_data.frame.empty else None
+    public_previous_close = _previous_close_from_frame(daily_data.frame)
     current_price = safe_round(getattr(quote, "price", None)) or safe_round(public_close) or 0
     if quote is not None:
         quote_errors, quote_warnings = _validate_quote(
             quote,
             daily_data.public_reference_close,
+            public_previous_close,
             current_price,
             is_intraday=session_intraday,
             now=now,
@@ -902,6 +910,7 @@ def _daily_frame_as_minute_fallback(frame: pd.DataFrame, freq: str) -> pd.DataFr
 def _validate_quote(
     quote: Any,
     public_reference_close: float | None,
+    public_previous_close: float | None,
     current_price: int,
     *,
     is_intraday: bool,
@@ -924,11 +933,22 @@ def _validate_quote(
 
     prev_close = finite(getattr(quote, "prev_close", None))
     if prev_close is not None and public_reference_close is not None:
-        diff_pct = _pct_diff(prev_close, public_reference_close)
+        prev_reference = public_reference_close
+        prev_reference_label = "pykrx/FDR 최신 완료 종가"
+        quote_price = finite(getattr(quote, "price", None)) or float(current_price or 0)
+        if (
+            not is_intraday
+            and public_previous_close is not None
+            and quote_price > 0
+            and _pct_diff(quote_price, public_reference_close) <= 3.0
+        ):
+            prev_reference = public_previous_close
+            prev_reference_label = "공개 기준 직전 완료 종가"
+        diff_pct = _pct_diff(prev_close, prev_reference)
         if diff_pct > 3.0:
-            errors.append(f"키움 전일종가와 pykrx/FDR 최신 완료 종가 차이 {diff_pct:.2f}%로 분석 중단")
+            errors.append(f"키움 전일종가와 {prev_reference_label} 차이 {diff_pct:.2f}%로 분석 중단")
         elif diff_pct > 1.0:
-            warnings.append(f"키움 전일종가와 pykrx/FDR 최신 완료 종가 차이 {diff_pct:.2f}% 경고")
+            warnings.append(f"키움 전일종가와 {prev_reference_label} 차이 {diff_pct:.2f}% 경고")
 
     high = finite(getattr(quote, "high", None))
     low = finite(getattr(quote, "low", None))

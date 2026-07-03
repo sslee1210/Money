@@ -447,6 +447,7 @@ def test_intraday_stale_quote_timestamp_stops_analysis():
     errors, warnings = command_chart_analyzer._validate_quote(
         quote,
         public_reference_close=54300,
+        public_previous_close=None,
         current_price=54500,
         is_intraday=True,
         now=datetime(2026, 6, 30, 10, 0),
@@ -468,6 +469,7 @@ def test_quote_price_outside_intraday_range_stops_analysis():
     errors, _warnings = command_chart_analyzer._validate_quote(
         quote,
         public_reference_close=54300,
+        public_previous_close=None,
         current_price=56000,
         is_intraday=True,
         now=datetime(2026, 6, 30, 10, 1),
@@ -487,11 +489,35 @@ def test_quote_price_range_unit_mismatch_stops_analysis():
     errors, _warnings = command_chart_analyzer._validate_quote(
         quote,
         public_reference_close=311000,
+        public_previous_close=None,
         current_price=311000,
         is_intraday=True,
         now=datetime(2026, 6, 30, 10, 1),
     )
     assert any("단위" in error for error in errors)
+
+
+def test_after_close_prev_close_compares_to_previous_completed_close():
+    quote = Quote(
+        code="005930",
+        name="삼성전자",
+        price=309500,
+        prev_close=286000,
+        high=313000,
+        low=283500,
+        timestamp=datetime(2026, 7, 4, 0, 20),
+    )
+    errors, warnings = command_chart_analyzer._validate_quote(
+        quote,
+        public_reference_close=309500,
+        public_previous_close=286000,
+        current_price=309500,
+        is_intraday=False,
+        now=datetime(2026, 7, 4, 0, 20),
+    )
+
+    assert not errors
+    assert not warnings
 
 
 def test_price_source_infers_realtime_fid_without_quote_time():
