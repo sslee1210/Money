@@ -47,7 +47,17 @@ def test_integrated_launcher_uses_money_bridge_for_millionaire():
 
     assert "KIWOOM_EXTERNAL_BRIDGE_ONLY=1" in text
     assert "Money bridge" in text
+    assert "%~dp0dashboard" in text
     assert "npm run server" in text
+
+
+def test_embedded_dashboard_uses_external_money_bridge_by_default():
+    server = (ROOT / "dashboard" / "server.js").read_text(encoding="utf-8")
+
+    assert "process.env.KIWOOM_EXTERNAL_BRIDGE_ONLY || '1'" in server
+    assert "Start Money bridge first" in server
+    assert (ROOT / "dashboard" / "package.json").exists()
+    assert not (ROOT / "dashboard" / "bridge").exists()
 
 
 def test_kiwoom_only_bridge_records_ignored_real_types():

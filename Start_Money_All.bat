@@ -17,10 +17,10 @@ if "%KIWOOM_BRIDGE_URL%"=="" (
     set "KIWOOM_BRIDGE_URL=http://127.0.0.1:8765"
 )
 set "KIWOOM_BRIDGE_BAT=%~dp0Start_Kiwoom_Bridge.bat"
-set "MILLIONAIRE_DIR=%USERPROFILE%\Desktop\millionaire"
+set "DASHBOARD_DIR=%~dp0dashboard"
 
 echo [kiwoom] Shared bridge URL: %KIWOOM_BRIDGE_URL%
-echo [mode] One Kiwoom login, one Money bridge, Money + millionaire share the same data bridge.
+echo [mode] One Kiwoom login, one Money bridge, Money analysis + dashboard share the same data bridge.
 
 if not exist ".venv\Scripts\python.exe" (
     echo [setup] Creating Money virtual environment...
@@ -87,12 +87,24 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if exist "%MILLIONAIRE_DIR%\package.json" (
-    echo [millionaire] Starting dashboard on http://localhost:5188 using the shared Money bridge.
-    start "Millionaire Dashboard" cmd /k "cd /d ""%MILLIONAIRE_DIR%"" && set PORT=5188&& set KIWOOM_BRIDGE_URL=%KIWOOM_BRIDGE_URL%&& set KIWOOM_EXTERNAL_BRIDGE_ONLY=1&& npm run server"
+if exist "%DASHBOARD_DIR%\package.json" (
+    if not exist "%DASHBOARD_DIR%\node_modules\vite\bin\vite.js" (
+        echo [dashboard] Installing dashboard packages...
+        pushd "%DASHBOARD_DIR%"
+        call npm install
+        if errorlevel 1 (
+            popd
+            echo [error] Dashboard package installation failed. Install Node.js/npm and try again.
+            pause
+            exit /b 1
+        )
+        popd
+    )
+    echo [dashboard] Starting dashboard on http://localhost:5188 using the shared Money bridge.
+    start "Money Dashboard" cmd /k "cd /d ""%DASHBOARD_DIR%"" && set PORT=5188&& set KIWOOM_BRIDGE_URL=%KIWOOM_BRIDGE_URL%&& set KIWOOM_EXTERNAL_BRIDGE_ONLY=1&& npm run server"
 ) else (
-    echo [millionaire] Folder not found: %MILLIONAIRE_DIR%
-    echo [millionaire] Dashboard launch skipped.
+    echo [dashboard] Folder not found: %DASHBOARD_DIR%
+    echo [dashboard] Dashboard launch skipped.
 )
 
 echo.
