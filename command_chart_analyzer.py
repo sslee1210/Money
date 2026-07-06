@@ -45,6 +45,7 @@ from kiwoom.provider import KiwoomDataError, KiwoomDataProvider
 KST = ZoneInfo("Asia/Seoul")
 DAILY_MIN_COMPLETED_ROWS = 240
 INTRADAY_MIN_ROWS = 20
+INTRADAY_REQUEST_LIMIT = 120
 INTRADAY_RETRY_ATTEMPTS = 4
 INTRADAY_RETRY_DELAY_SEC = 1.0
 
@@ -251,7 +252,7 @@ def _get_intraday_ohlcv_with_retry(
     attempts = max(1, int(INTRADAY_RETRY_ATTEMPTS))
     for attempt in range(attempts):
         try:
-            frame = provider.get_intraday_ohlcv(code, interval_minutes=interval_minutes)
+            frame = provider.get_intraday_ohlcv(code, interval_minutes=interval_minutes, limit=INTRADAY_REQUEST_LIMIT)
             last_rows = 0 if frame is None else len(frame)
             if frame is not None and last_rows >= min_rows:
                 return frame

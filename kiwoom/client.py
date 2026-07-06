@@ -36,9 +36,11 @@ class KiwoomBridgeClient:
     silently falling back to uncertain data.
     """
 
-    def __init__(self, base_url: str | None = None, timeout: float = 5.0):
+    def __init__(self, base_url: str | None = None, timeout: float = 5.0, tr_timeout: float | None = None):
         self.base_url = (base_url or os.getenv("KIWOOM_BRIDGE_URL") or "http://127.0.0.1:8765").rstrip("/")
         self.timeout = timeout
+        self.connect_timeout = min(float(timeout), 5.0)
+        self.tr_timeout = _env_float("KIWOOM_BRIDGE_TR_TIMEOUT", tr_timeout if tr_timeout is not None else 30.0)
 
     @classmethod
     def from_env(cls) -> "KiwoomBridgeClient":
@@ -54,7 +56,7 @@ class KiwoomBridgeClient:
         last_error: Exception | None = None
         for attempt in range(3):
             try:
-                response = requests.get(f"{self.base_url}{path}", params=params, timeout=self.timeout)
+                response = requests.get(f"{self.base_url}{path}", params=params, timeout=self._request_timeout(path))
                 response.raise_for_status()
                 payload = response.json()
                 if isinstance(payload, dict) and payload.get("error"):
@@ -82,6 +84,13 @@ class KiwoomBridgeClient:
         if last_error is not None:
             raise last_error
         raise KiwoomConnectionError(f"키움 브릿지 응답 실패: {path}")
+
+    def _request_timeout(self, path: str) -> tuple[float, float]:
+        if path == "/candles/minute" or path == "/candles/daily" or path.startswith("/candles/"):
+            return (self.connect_timeout, max(float(self.timeout), float(self.tr_timeout)))
+        if path == "/ticks":
+            return (self.connect_timeout, max(float(self.timeout), 15.0))
+        return (self.connect_timeout, float(self.timeout))
 
     def get_quote(self, code: str) -> dict[str, Any]:
         try:
@@ -120,6 +129,13 @@ def _to_number(value: Any) -> float:
         return float(str(value).replace(",", ""))
     except Exception:
         return 0.0
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except Exception:
+        return float(default)
 
 
 def _retryable_kiwoom_error(error_text: str) -> bool:

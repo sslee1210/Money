@@ -155,3 +155,33 @@ def test_unsupported_endpoint_error_mentions_path(monkeypatch):
         assert "endpoint 미지원" in str(exc)
     else:
         raise AssertionError("expected unsupported endpoint failure")
+
+
+def test_minute_candles_use_extended_tr_read_timeout(monkeypatch):
+    timeouts = []
+
+    def fake_get(url, params=None, timeout=None):
+        timeouts.append(timeout)
+        return FakeResponse({"ok": True, "candles": [{"datetime": "2026-07-06T09:00:00+09:00", "close": 100}]})
+
+    monkeypatch.setattr("kiwoom.client.requests.get", fake_get)
+
+    candles = KiwoomBridgeClient("http://127.0.0.1:8765", timeout=5.0, tr_timeout=30.0).get_minute_candles("005380", interval=3)
+
+    assert candles[0]["close"] == 100
+    assert timeouts == [(5.0, 30.0)]
+
+
+def test_quote_keeps_short_read_timeout(monkeypatch):
+    timeouts = []
+
+    def fake_get(url, params=None, timeout=None):
+        timeouts.append(timeout)
+        return FakeResponse({"code": "005930", "price": 100, "timestamp": "2026-07-06T09:00:00+09:00"})
+
+    monkeypatch.setattr("kiwoom.client.requests.get", fake_get)
+
+    quote = KiwoomBridgeClient("http://127.0.0.1:8765", timeout=5.0, tr_timeout=30.0).get_quote("005930")
+
+    assert quote["price"] == 100
+    assert timeouts == [(5.0, 5.0)]

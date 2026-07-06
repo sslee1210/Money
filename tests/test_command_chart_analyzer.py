@@ -118,8 +118,10 @@ class TransientShortMinuteProvider(MockProvider):
     def __init__(self):
         super().__init__(fail=False)
         self.calls: dict[int, int] = {}
+        self.limits: list[int] = []
 
     def get_intraday_ohlcv(self, code: str, interval_minutes: int = 1, limit: int = 600) -> pd.DataFrame:
+        self.limits.append(limit)
         count = self.calls.get(interval_minutes, 0)
         self.calls[interval_minutes] = count + 1
         if count == 0:
@@ -357,6 +359,7 @@ def test_integrated_transient_short_minutes_retries_and_saves_report(tmp_path, m
     assert not _qa_report_path(tmp_path).exists()
     assert provider.calls[3] == 2
     assert provider.calls[5] == 2
+    assert set(provider.limits) == {command_chart_analyzer.INTRADAY_REQUEST_LIMIT}
 
 
 def test_realtime_limited_positive_buy_is_qa_failure():
