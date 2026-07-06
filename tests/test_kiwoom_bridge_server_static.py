@@ -33,6 +33,23 @@ def test_bridge_quote_exposes_realtime_time_and_candle_sanity_flag():
     assert "candle_comparable" in text
 
 
+def test_bridge_exposes_millionaire_rising_amount_rank_endpoint():
+    text = (ROOT / "kiwoom_bridge_server" / "kiwoom_bridge.py").read_text(encoding="utf-8")
+
+    assert "def rising_amount_rank" in text
+    assert "@api.get('/rising-amount-rank')" in text
+    assert "is_rising_rank_row" in text
+    assert "Kiwoom OpenAPI+ opt10032 rising-filter" in text
+
+
+def test_integrated_launcher_uses_money_bridge_for_millionaire():
+    text = (ROOT / "Start_Money_All.bat").read_text(encoding="utf-8")
+
+    assert "KIWOOM_EXTERNAL_BRIDGE_ONLY=1" in text
+    assert "Money bridge" in text
+    assert "npm run server" in text
+
+
 def test_kiwoom_only_bridge_records_ignored_real_types():
     text = (ROOT / "kiwoom_bridge_server" / "kiwoom_bridge_kiwoom_only.py").read_text(encoding="utf-8")
 

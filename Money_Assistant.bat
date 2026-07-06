@@ -17,7 +17,6 @@ if "%KIWOOM_BRIDGE_URL%"=="" (
     set "KIWOOM_BRIDGE_URL=http://127.0.0.1:8765"
 )
 set "KIWOOM_BRIDGE_BAT=%~dp0Start_Kiwoom_Bridge.bat"
-set "KIWOOM_FALLBACK_BRIDGE_BAT=%USERPROFILE%\Desktop\millionaire\start-bridge.bat"
 
 echo [kiwoom] Bridge URL: %KIWOOM_BRIDGE_URL%
 
@@ -53,9 +52,6 @@ echo [kiwoom] Checking local bridge connection...
 ".venv\Scripts\python.exe" -B kiwoom_bridge_status.py --quiet >nul 2>nul
 if errorlevel 1 (
     echo [kiwoom] Local bridge is not reachable. Trying to start Kiwoom bridge...
-    if not exist "%KIWOOM_BRIDGE_BAT%" (
-        set "KIWOOM_BRIDGE_BAT=%KIWOOM_FALLBACK_BRIDGE_BAT%"
-    )
     if exist "%KIWOOM_BRIDGE_BAT%" (
         echo [kiwoom] Starting: %KIWOOM_BRIDGE_BAT%
         start "Kiwoom Bridge" "%KIWOOM_BRIDGE_BAT%"
@@ -72,7 +68,7 @@ if errorlevel 1 (
         exit /b 1
     ) else (
         echo [kiwoom] Existing bridge launcher not found: %KIWOOM_BRIDGE_BAT%
-        echo [error] Kiwoom bridge is required for Money Assistant analysis.
+        echo [error] Money bridge is required for Money Assistant analysis.
         pause
         exit /b 1
     )

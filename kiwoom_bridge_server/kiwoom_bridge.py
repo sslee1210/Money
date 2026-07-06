@@ -93,6 +93,33 @@ def to_int(value: Any) -> int:
     return int(abs(to_number(value)))
 
 
+def explicit_row_change_rate(row: Dict[str, Any]) -> Optional[float]:
+    for key in ('등락률', '등락율', '전일대비율', '전일대비율(%)'):
+        value = row.get(key)
+        if str(value or '').strip() not in {'', '-', '--'}:
+            return to_number(value)
+    return None
+
+
+def is_rising_rank_row(item: Dict[str, Any]) -> bool:
+    raw = item.get('rawTr') or item.get('rawDailyDetail') or {}
+    if isinstance(raw, dict):
+        raw_rate = explicit_row_change_rate(raw)
+        if raw_rate is not None:
+            return raw_rate > 0
+    rate = to_number(item.get('changeRate'))
+    if rate > 0:
+        return True
+    if isinstance(raw, dict):
+        sign_text = ''.join(str(raw.get(key) or '') for key in ('전일대비기호', '대비기호', '등락기호'))
+        if any(token in sign_text for token in ('상승', '▲', '+', '2')):
+            return True
+        diff = to_number(raw.get('전일대비') or raw.get('대비'))
+        if diff > 0:
+            return True
+    return False
+
+
 def env_bool(name: str, default: bool = False) -> bool:
     fallback = '1' if default else '0'
     value = os.getenv(name, fallback).strip().lower()
@@ -482,6 +509,61 @@ class KiwoomController(QObject):
             'exchangeTypeLabel': {'1': 'KRX', '2': 'NXT', '3': '통합'}.get(EXCHANGE_TYPE, EXCHANGE_TYPE),
             'criteria': {
                 'rank': 'daily-trade-amount',
+                'limit': limit,
+                'markets': market_list,
+            },
+            'items': items,
+            'stats': {
+                'count': len(items),
+                'totalTradeAmountMillion': sum(int(item.get('tradeAmountMillion') or 0) for item in items),
+            },
+        }
+
+    def rising_amount_rank(self, limit: int = 50, markets: Optional[List[str]] = None) -> Dict[str, Any]:
+        if not self.login:
+            return {'ok': False, 'error': 'Kiwoom login required'}
+
+        ranking_rows: Dict[str, Dict[str, Any]] = {}
+        market_list = [item for item in (markets or AMOUNT_RANK_MARKETS) if item]
+        for market in market_list:
+            self._merge_rank_rows(ranking_rows, self._request_amount_rank(market), 'amountRank', market)
+            pause(TR_DELAY_MS)
+        if not ranking_rows and market_list != MARKETS:
+            market_list = MARKETS
+            for market in market_list:
+                self._merge_rank_rows(ranking_rows, self._request_amount_rank(market), 'amountRank', market)
+                pause(TR_DELAY_MS)
+
+        rows = [item for item in ranking_rows.values() if is_rising_rank_row(item)]
+        rows.sort(
+            key=lambda item: (int(item.get('tradeAmountMillion') or 0), int(item.get('volume') or 0)),
+            reverse=True,
+        )
+        rows = rows[:max(1, min(int(limit or 50), 100))]
+        self._hydrate_master([row['code'] for row in rows])
+
+        items = []
+        for index, item in enumerate(rows, start=1):
+            master = self.master.get(item['code'], {})
+            items.append({
+                **item,
+                'rank': index,
+                'sector': master.get('sector') or '미분류',
+                'sourceLabel': '키움상승거래대금순TR',
+                'rankingBasis': 'rising-amount',
+                'updatedAt': now_iso(),
+            })
+
+        return {
+            'ok': True,
+            'provider': 'Kiwoom OpenAPI+ opt10032 rising-filter',
+            'updatedAt': now_iso(),
+            'exchangeType': EXCHANGE_TYPE,
+            'exchangeTypeLabel': {'1': 'KRX', '2': 'NXT', '3': '통합'}.get(EXCHANGE_TYPE, EXCHANGE_TYPE),
+            'criteria': {
+                'rank': 'rising-daily-trade-amount',
+                'changeFilter': 'change-rate-positive',
+                'sort': 'tradeAmountMillion-desc',
                 'limit': limit,
                 'markets': market_list,
             },
@@ -1280,6 +1362,12 @@ def ranking_debug(code: str) -> Dict[str, Any]:
 def daily_amount_rank(limit: int = 50, markets: str = '') -> Dict[str, Any]:
     market_list = [item.strip() for item in str(markets or '').split(',') if item.strip()] or None
     return run_controller_call(lambda: controller.daily_amount_rank(max(1, min(int(limit or 50), 100)), market_list), 90)
+
+
+@api.get('/rising-amount-rank')
+def rising_amount_rank(limit: int = 50, markets: str = '') -> Dict[str, Any]:
+    market_list = [item.strip() for item in str(markets or '').split(',') if item.strip()] or None
+    return run_controller_call(lambda: controller.rising_amount_rank(max(1, min(int(limit or 50), 100)), market_list), 90)
 
 
 @api.get('/daily-detail-rank')
