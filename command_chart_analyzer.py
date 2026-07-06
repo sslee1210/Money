@@ -423,6 +423,7 @@ def analyze_command_chart(
         decision = apply_realtime_limit(decision)
     if decision.verdict != pipeline.final_verdict and pipeline.final_verdict in {"분석 중단", "팔아라", "사지 마라", "기다려라", "보유하라"}:
         decision = replace(decision, verdict=pipeline.final_verdict, headline=f"{decision.headline}; {pipeline.final_reason}")
+    decision = _guard_conservative_decision_text(decision, sse_result if sse_status.ok else None)
 
     if decision.stopped:
         return _stop_and_write_failure(safe_name, code, list(decision.blocking_errors))
@@ -559,7 +560,8 @@ def apply_sse_safety_filter(decision: DecisionResult, sse_result: SSEResult, cur
         decision,
         verdict=sse_result.verdict,
         headline=f"{decision.headline}; SSE 안전 필터 적용: {sse_result.verdict}",
-        actions=(action,) + decision.actions,
+        actions=(action,) + _demote_positive_buy_lines(decision.actions, sse_result),
+        buy_conditions=_demote_positive_buy_lines(decision.buy_conditions, sse_result),
         no_buy_conditions=decision.no_buy_conditions + (_sse_no_buy_text(sse_result),),
         sell_conditions=decision.sell_conditions + (f"SSE 예상 손절가 {format_price(levels.stop)} 이탈 시 팔아라 또는 비중 축소하라.",),
         holder_conditions=decision.holder_conditions + (f"SSE 압력값 {levels.pressure:.2f} 기준으로 보유자는 {format_price(levels.target1)} 접근 시 1차 익절을 관리하라.",),
@@ -585,6 +587,53 @@ def _sse_action_text(sse_result: SSEResult, current_price: int, is_intraday: boo
 def _sse_no_buy_text(sse_result: SSEResult) -> str:
     levels = sse_result.levels
     return f"SSE 추격 금지선 {format_price(levels.no_chase)} 이상 또는 RR1 {levels.rr1:.2f}배 미만이면 사지 마라."
+
+
+BUY_POSITIVE_PHRASES = (
+    "1차 매수하라",
+    "1차 매수를 검토하라",
+    "1차 분할 매수",
+    "분할 매수 가능",
+    "매수 가능",
+    "1차 진입하라",
+)
+
+
+def _demote_positive_buy_lines(lines: tuple[str, ...], sse_result: SSEResult | None) -> tuple[str, ...]:
+    if sse_result is not None and sse_result.verdict in {"사라", "조건부로 사라"}:
+        return lines
+    return tuple(_demote_positive_buy_line(line, sse_result) for line in lines)
+
+
+def _guard_conservative_decision_text(decision: DecisionResult, sse_result: SSEResult | None) -> DecisionResult:
+    if decision.verdict in {"사라", "조건부로 사라", "분석 중단"}:
+        return decision
+    guarded_actions = _demote_positive_buy_lines(decision.actions, sse_result)
+    guarded_buy_conditions = _demote_positive_buy_lines(decision.buy_conditions, sse_result)
+    return replace(decision, actions=guarded_actions, buy_conditions=guarded_buy_conditions)
+
+
+def _demote_positive_buy_line(line: str, sse_result: SSEResult | None) -> str:
+    if not any(phrase in line for phrase in BUY_POSITIVE_PHRASES):
+        if line.startswith("지지 매수:"):
+            return line.replace("지지 매수:", "지지 관찰:", 1)
+        if line.startswith("회복 매수:"):
+            return line.replace("회복 매수:", "회복 관찰:", 1)
+        if line.startswith("돌파 매수:"):
+            return line.replace("돌파 매수:", "돌파 관찰:", 1)
+        return line
+    entry_text = format_price(sse_result.levels.entry) if sse_result is not None else ""
+    wait_text = f"SSE 예상 진입가 {entry_text} 회복 전까지" if sse_result is not None else "최종 보수 판정이 해제되기 전까지"
+    if line.startswith("돌파 매수:"):
+        prefix = line.replace("돌파 매수:", "돌파 관찰:", 1).split(" 시", 1)[0]
+        return f"{prefix} 조건은 관심 신호로만 관찰하고, {wait_text} 신규매수하지 마라."
+    if line.startswith("지지 매수:") or line.startswith("회복 매수:"):
+        prefix = line.replace("지지 매수:", "지지 관찰:", 1).replace("회복 매수:", "회복 관찰:", 1).split(" 시", 1)[0]
+        return f"{prefix} 조건은 관심 신호로만 관찰하고, {wait_text} 신규매수하지 마라."
+    if " 이상" in line:
+        prefix = line.split(" 이상", 1)[0]
+        return f"{prefix} 이상 돌파 시도는 관심 신호로만 관찰하고, {wait_text} 신규매수하지 마라."
+    return f"기존 매수 조건은 관심 신호로만 관찰하고, {wait_text} 신규매수하지 마라."
 
 
 def apply_realtime_limit(decision: DecisionResult) -> DecisionResult:

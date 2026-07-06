@@ -15,6 +15,15 @@ ALLOWED_VERDICTS: set[Verdict] = {
 }
 
 INTRADAY_BANNED_CONFIRMED_PHRASES = ("확정 돌파", "일봉 돌파 확정", "돌파 확인 완료")
+BUY_POSITIVE_IMPERATIVE_PHRASES = (
+    "1차 매수하라",
+    "1차 매수를 검토하라",
+    "1차 분할 매수",
+    "분할 매수 가능",
+    "매수 가능",
+    "1차 진입하라",
+)
+CONSERVATIVE_VERDICTS = {"사지 마라", "기다려라", "보유하라", "팔아라"}
 
 
 def validate_command_report(
@@ -39,6 +48,10 @@ def validate_command_report(
         errors.extend(decision.blocking_errors)
     if is_intraday and any(phrase in report for phrase in INTRADAY_BANNED_CONFIRMED_PHRASES):
         errors.append("장중 리포트에 확정 돌파 표현이 포함되었습니다")
+    if decision.verdict in CONSERVATIVE_VERDICTS:
+        positive_hits = [phrase for phrase in BUY_POSITIVE_IMPERATIVE_PHRASES if phrase in report]
+        if positive_hits:
+            errors.append(f"보수적 최종 판정({decision.verdict})과 충돌하는 매수 긍정 명령이 남아 있습니다: {', '.join(positive_hits)}")
 
     required_evidence = {
         "핵심 지지선": levels.support,

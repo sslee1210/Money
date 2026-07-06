@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 import command_chart_analyzer
-from core.decision_engine import DecisionContext, DecisionLevels, PriceEvidence, evaluate_decision
+from core.decision_engine import DecisionContext, DecisionLevels, DecisionResult, PriceEvidence, evaluate_decision
 from core.indicators import calculate_standard_indicators, indicators_valid, intraday_indicators_valid
 from core.qa import validate_command_report
 from core.sse_indicator import SSELevels, SSEOpportunity, SSEResult, SSEEvidence
@@ -460,6 +460,79 @@ def test_price_evidence_above_current_is_labeled_recovery_line():
     summary = command_chart_analyzer._price_evidence_summary(evidence, current_price=316000)
 
     assert summary == "회복/안착 기준선 322,000원: 일목 전환선 근거"
+
+
+def test_sse_wait_verdict_demotes_positive_buy_actions_and_conditions():
+    decision = DecisionResult(
+        verdict="조건부로 사라",
+        headline="장중 돌파 시도",
+        actions=("176,100원 이상을 거래량 동반해 3분봉 또는 5분봉 종가로 유지할 때만 1차 매수하라. 오늘 종가 확인 필요.",),
+        buy_conditions=("돌파 매수: 176,100원 이상을 거래량 동반해 5분봉 종가로 유지 시",),
+        no_buy_conditions=("176,000원 아래에서 5분봉 종가가 마감되면 사지 마라.",),
+        sell_conditions=("162,000원 이탈 시 팔아라 또는 비중 축소하라.",),
+        holder_conditions=("보유자는 176,000원 이탈 시 추가매수 보류하라.",),
+        price_evidence=(PriceEvidence("매수 확인선", 181400, ("3분봉 20이평선",)),),
+    )
+    sse_result = SSEResult(
+        verdict="기다려라",
+        levels=SSELevels(
+            base=195236.0,
+            upper=256498.0,
+            lower=133974.0,
+            pressure=-0.46,
+            entry=203745.0,
+            stop=161600.0,
+            target1=237779.0,
+            target2=256498.0,
+            no_chase=246288.0,
+            rr1=0.81,
+            rr2=1.25,
+        ),
+        evidence=(),
+        warnings=("SSE_RR1 0.81배로 신규매수 기준 1.20배 미만",),
+        blocking_errors=(),
+        opportunity=None,
+    )
+
+    filtered = command_chart_analyzer.apply_sse_safety_filter(decision, sse_result, current_price=179600, is_intraday=True)
+    rendered = "\n".join(filtered.actions + filtered.buy_conditions)
+
+    assert filtered.verdict == "기다려라"
+    assert "1차 매수하라" not in rendered
+    assert "돌파 매수:" not in rendered
+    assert "관심 신호로만 관찰" in rendered
+    assert "SSE 예상 진입가 203,745원 회복 전까지 신규매수하지 마라" in rendered
+
+
+def test_qa_blocks_positive_buy_imperative_when_final_verdict_is_wait():
+    levels = DecisionLevels(
+        support=PriceEvidence("핵심 지지선", 176000, ("일목 구름 상단",)),
+        confirmation=PriceEvidence("매수 확인선", 181400, ("3분봉 20이평선",)),
+        breakout=PriceEvidence("돌파선", 176100, ("일목 구름 상단",)),
+        stop=PriceEvidence("손절/방어선", 162000, ("최근 20일 저점",)),
+        no_chase=PriceEvidence("추격 금지선", 252000, ("볼린저밴드 상단",)),
+    )
+    decision = DecisionResult(
+        verdict="기다려라",
+        headline="SSE 안전 필터 적용",
+        actions=("176,100원 이상을 거래량 동반해 3분봉 또는 5분봉 종가로 유지할 때만 1차 매수하라.",),
+        buy_conditions=("지지 매수: 176,000원 지지 후 181,400원 회복 시",),
+        no_buy_conditions=("176,000원 아래에서 5분봉 종가가 마감되면 사지 마라.",),
+        sell_conditions=("162,000원 이탈 시 팔아라.",),
+        holder_conditions=("보유자는 176,000원 이탈 시 추가매수 보류하라.",),
+        price_evidence=(levels.support, levels.confirmation, levels.breakout, levels.stop, levels.no_chase),
+    )
+
+    errors = validate_command_report(
+        "## 내부 검증\n내부 검증: 통과\n1차 매수하라",
+        decision,
+        levels,
+        is_intraday=True,
+        data_valid=True,
+        current_price=179600,
+    )
+
+    assert any("매수 긍정 명령" in error for error in errors)
 
 
 def test_intraday_stale_quote_timestamp_stops_analysis():
