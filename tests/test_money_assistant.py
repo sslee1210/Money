@@ -65,3 +65,11 @@ def test_run_request_dispatches_without_order_functions(monkeypatch):
     monkeypatch.setattr(money_assistant.command_chart_analyzer, "analyze_integrated_chart", lambda code, name: f"integrated {code} {name}")
 
     assert money_assistant.run_request(request) == "integrated 005930 삼성전자"
+
+
+def test_hidden_gem_request_routes_to_scanner(monkeypatch):
+    request = money_assistant.parse_request("살 주식 찾아줘")
+    monkeypatch.setattr(money_assistant.hidden_gem_scanner, "run_hidden_gem_scan", lambda: "hidden gems")
+
+    assert request.mode == "hidden_gem"
+    assert money_assistant.run_request(request) == "hidden gems"

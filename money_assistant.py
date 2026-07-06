@@ -13,6 +13,7 @@ import pandas as pd
 import analyze_stock
 import analyze_stock_intraday
 import command_chart_analyzer
+import hidden_gem_scanner
 
 
 ROOT = Path(__file__).resolve().parent
@@ -81,9 +82,27 @@ def is_korean_market_open(now: datetime | None = None) -> bool:
 
 
 def detect_mode(text: str) -> str:
+    if is_hidden_gem_request(text):
+        return "hidden_gem"
     # Money Assistant의 자연어 입력은 하나의 통합 분석 파이프라인만 사용한다.
     # 키움 브릿지/로그인이 준비되지 않으면 정상 리포트 대신 QA 실패로 중단한다.
     return "integrated"
+
+
+def is_hidden_gem_request(text: str) -> bool:
+    normalized = normalize_query(text).replace(" ", "")
+    triggers = (
+        "진흙속진주",
+        "진주",
+        "살주식",
+        "살만한",
+        "매수후보",
+        "후보찾",
+        "종목찾",
+        "추천종목",
+        "좋은종목",
+    )
+    return any(token in normalized for token in triggers)
 
 
 def normalize_query(text: str) -> str:
@@ -202,11 +221,15 @@ def parse_request(text: str) -> ParsedRequest:
     text = text.strip()
     if not text:
         raise ValueError("분석할 문장을 입력하세요.")
+    if is_hidden_gem_request(text):
+        return ParsedRequest(code="", name=None, mode="hidden_gem", original=text)
     code, name = resolve_stock(text)
     return ParsedRequest(code=code, name=name, mode=detect_mode(text), original=text)
 
 
 def run_request(request: ParsedRequest) -> str:
+    if request.mode == "hidden_gem":
+        return hidden_gem_scanner.run_hidden_gem_scan()
     if request.mode == "kiwoom":
         return command_chart_analyzer.analyze_command_chart(request.code, request.name)
     if request.mode == "intraday":
@@ -218,14 +241,18 @@ def run_request(request: ParsedRequest) -> str:
 
 def run_text(text: str) -> str:
     request = parse_request(text)
-    label = "통합"
-    print(f"[분석 실행] {label}: {request.code} {request.name or ''}".strip())
+    if request.mode == "hidden_gem":
+        print("[후보 발굴 실행] 진흙 속 진주 스캐너")
+    else:
+        label = "통합"
+        print(f"[분석 실행] {label}: {request.code} {request.name or ''}".strip())
     return run_request(request)
 
 
 def repl() -> int:
     print("Money 분석 프롬프트")
     print("예: 삼성전자 분석해줘 / 005930 삼성전자 분석해줘")
+    print("후보 발굴: 살 주식 찾아줘 / 진흙 속 진주 찾아줘 / 매수 후보 찾아줘")
     print("키움 로그인 완료 후 공개 데이터 + 키움 가격/분봉 보정 + SSE 통합 보고서 1개로 생성됩니다.")
     print("종료: exit 또는 quit")
     while True:
