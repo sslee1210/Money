@@ -155,24 +155,12 @@ def evaluate_decision(ctx: DecisionContext) -> DecisionResult:
         final_state = "HOLD_AND_TRAIL"
 
     buy_conditions = (
-        f"지지 매수: {format_price(levels.support.price)} 지지 후 {format_price(levels.confirmation.price)} 회복 시",
+        _entry_condition(levels, current, ctx.is_intraday),
         _breakout_condition(levels, ctx.is_intraday),
     )
-    if ctx.is_intraday:
-        no_buy_conditions = (
-            f"{format_price(levels.support.price)} 아래에서 5분봉 종가가 마감되면 사지 마라.",
-            f"{format_price(levels.no_chase.price)} 이상에서는 추격 매수하지 마라.",
-        )
-    else:
-        no_buy_conditions = (
-            f"다음 거래일에 {format_price(levels.support.price)} 아래로 밀리거나 일봉 종가가 이 가격 아래이면 사지 마라.",
-            f"{format_price(levels.no_chase.price)} 이상에서는 추격 매수하지 마라.",
-        )
+    no_buy_conditions = _no_buy_conditions(levels, current, ctx.is_intraday)
     sell_conditions = (f"{format_price(levels.stop.price)} 이탈 시 팔아라 또는 비중 축소하라.",)
-    if levels.support.price == levels.stop.price:
-        holder_conditions = (f"보유자는 {format_price(levels.stop.price)} 이탈 시 추가매수 보류 및 방어/손절하라.",)
-    else:
-        holder_conditions = (f"보유자는 {format_price(levels.support.price)} 이탈 시 추가매수 보류, {format_price(levels.stop.price)} 이탈 시 방어/손절하라.",)
+    holder_conditions = (_holder_condition(levels, current),)
     return DecisionResult(
         verdict=verdict,
         headline=headline,
@@ -197,6 +185,46 @@ def _breakout_condition(levels: DecisionLevels, is_intraday: bool) -> str:
         return "돌파 매수: 근거 있는 돌파선 없음"
     suffix = "거래량 동반해 5분봉 종가로 유지 시" if is_intraday else "일봉 종가 돌파 확인 시"
     return f"돌파 매수: {format_price(levels.breakout.price)} 이상을 {suffix}"
+
+
+def _entry_condition(levels: DecisionLevels, current: int, is_intraday: bool) -> str:
+    assert levels.support and levels.confirmation
+    support = levels.support.price
+    confirmation = levels.confirmation.price
+    if support > current and support >= confirmation:
+        suffix = "3분봉 또는 5분봉 종가 유지 시" if is_intraday else "일봉 종가 안착 시"
+        return f"회복 매수: {format_price(confirmation)} 회복 후 {format_price(support)} 이상에서 {suffix}"
+    if support > confirmation:
+        suffix = "3분봉 또는 5분봉 종가 안착 시" if is_intraday else "일봉 종가 안착 시"
+        return f"회복 매수: {format_price(confirmation)} 회복 후 {format_price(support)} 이상 {suffix}"
+    return f"지지 매수: {format_price(support)} 지지 후 {format_price(confirmation)} 회복 시"
+
+
+def _no_buy_conditions(levels: DecisionLevels, current: int, is_intraday: bool) -> tuple[str, str]:
+    assert levels.support and levels.no_chase
+    support = levels.support.price
+    if is_intraday:
+        if support > current:
+            first = f"{format_price(support)} 회복 전이거나 이 가격 아래에서 5분봉 종가가 마감되면 사지 마라."
+        else:
+            first = f"{format_price(support)} 아래에서 5분봉 종가가 마감되면 사지 마라."
+    else:
+        if support > current:
+            first = f"다음 거래일에 {format_price(support)} 이상 일봉 종가 안착 전까지 사지 마라."
+        else:
+            first = f"다음 거래일에 {format_price(support)} 아래로 밀리거나 일봉 종가가 이 가격 아래이면 사지 마라."
+    return (first, f"{format_price(levels.no_chase.price)} 이상에서는 추격 매수하지 마라.")
+
+
+def _holder_condition(levels: DecisionLevels, current: int) -> str:
+    assert levels.support and levels.stop
+    support = levels.support.price
+    stop = levels.stop.price
+    if support == stop:
+        return f"보유자는 {format_price(stop)} 이탈 시 추가매수 보류 및 방어/손절하라."
+    if current < support:
+        return f"보유자는 {format_price(support)} 회복 실패 구간에서는 추가매수 보류, {format_price(stop)} 이탈 시 방어/손절하라."
+    return f"보유자는 {format_price(support)} 이탈 시 추가매수 보류, {format_price(stop)} 이탈 시 방어/손절하라."
 
 
 def _missing_required_evidence(levels: DecisionLevels) -> list[str]:

@@ -695,7 +695,7 @@ def render_report(
 ) -> str:
     session_text = "장중" if is_intraday else "장마감 이후"
     price_source = price_source or PriceSourceInfo("현재가", "키움 가격 보정", "", False)
-    evidence = "\n".join(f"* {item.summary()}" for item in decision.price_evidence)
+    evidence = "\n".join(f"* {_price_evidence_summary(item, current_price)}" for item in decision.price_evidence)
     actions = "\n".join(f"* {line}" for line in decision.actions)
     buy = "\n".join(f"* {line}" for line in decision.buy_conditions)
     no_buy = "\n".join(f"* {line}" for line in decision.no_buy_conditions)
@@ -751,6 +751,14 @@ def render_report(
 
 {internal_validation}
 """
+
+
+def _price_evidence_summary(item: PriceEvidence, current_price: int) -> str:
+    label = item.label
+    if item.label == "핵심 지지선" and item.price > current_price:
+        label = "회복/안착 기준선"
+    reasons = ", ".join(item.reasons)
+    return f"{label} {format_price(item.price)}: {reasons} 근거"
 
 
 def render_internal_validation_section(

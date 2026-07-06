@@ -434,6 +434,31 @@ def test_holder_condition_merges_same_support_and_stop_price():
     assert decision.holder_conditions == ("보유자는 49,000원 이탈 시 추가매수 보류 및 방어/손절하라.",)
 
 
+def test_recovery_line_above_current_does_not_render_as_support_buy():
+    levels = DecisionLevels(
+        support=PriceEvidence("핵심 지지선", 322000, ("일목 전환선",)),
+        confirmation=PriceEvidence("매수 확인선", 320500, ("직전 분봉 반등 고점",)),
+        breakout=PriceEvidence("돌파선", 343000, ("최근 5일 고점",)),
+        stop=PriceEvidence("손절/방어선", 282500, ("최근 20일 저점",)),
+        no_chase=PriceEvidence("추격 금지선", 373000, ("볼린저밴드 상단",)),
+    )
+    decision = evaluate_decision(DecisionContext(current_price=316000, levels=levels, is_intraday=True, risk_reward=0.57))
+
+    assert decision.verdict == "사지 마라"
+    assert decision.buy_conditions[0] == "회복 매수: 320,500원 회복 후 322,000원 이상에서 3분봉 또는 5분봉 종가 유지 시"
+    assert "322,000원 지지 후 320,500원 회복" not in decision.buy_conditions[0]
+    assert decision.no_buy_conditions[0] == "322,000원 회복 전이거나 이 가격 아래에서 5분봉 종가가 마감되면 사지 마라."
+    assert decision.holder_conditions[0] == "보유자는 322,000원 회복 실패 구간에서는 추가매수 보류, 282,500원 이탈 시 방어/손절하라."
+
+
+def test_price_evidence_above_current_is_labeled_recovery_line():
+    evidence = PriceEvidence("핵심 지지선", 322000, ("일목 전환선",))
+
+    summary = command_chart_analyzer._price_evidence_summary(evidence, current_price=316000)
+
+    assert summary == "회복/안착 기준선 322,000원: 일목 전환선 근거"
+
+
 def test_intraday_stale_quote_timestamp_stops_analysis():
     quote = Quote(
         code="005930",
