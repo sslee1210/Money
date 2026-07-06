@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import importlib
 import re
 import sys
 
@@ -46,11 +47,16 @@ def test_bridge_exposes_millionaire_rising_amount_rank_endpoint():
 
 def test_integrated_launcher_uses_money_bridge_for_millionaire():
     text = (ROOT / "Start_Money_All.bat").read_text(encoding="utf-8")
+    bridge_launcher = (ROOT / "Start_Kiwoom_Bridge.bat").read_text(encoding="utf-8")
 
     assert "KIWOOM_EXTERNAL_BRIDGE_ONLY=1" in text
     assert "Money bridge" in text
     assert "%~dp0dashboard" in text
     assert "npm run server" in text
+    assert "MONEY_RESTART_BRIDGE=1" in text
+    assert 'findstr ":8765"' in text
+    assert "set ALLOW_NAVER_SECTOR=1" in bridge_launcher
+    assert "set NAVER_SECTOR_MAX_LOOKUPS=" in bridge_launcher
 
 
 def test_embedded_dashboard_uses_external_money_bridge_by_default():
@@ -93,3 +99,26 @@ def test_realtime_type_accepts_cp949_bytes_as_latin1_text():
     assert namespace["normalize_kiwoom_text"](mojibake_real_type) == "주식체결"
     assert namespace["normalize_kiwoom_text"](mojibake_stock_name) == "삼성전자"
     assert namespace["is_stock_trade_real_type"](mojibake_real_type)
+
+
+def test_naver_upjong_sector_fallback(monkeypatch):
+    sector_map = importlib.import_module("kiwoom_sector_map")
+
+    class FakeResponse:
+        def read(self):
+            return (
+                '<h4><span>동종업종비교</span>'
+                '<em>(업종명 : <a href="/sise/sise_group_detail.naver?type=upjong&no=278">'
+                '반도체와반도체장비</a>)</em></h4>'
+            ).encode("utf-8")
+
+    monkeypatch.setattr(sector_map, "NAVER_SECTOR_ENABLED", True)
+    monkeypatch.setattr(sector_map, "NAVER_SECTOR_MAX_LOOKUPS", 10)
+    monkeypatch.setattr(sector_map, "NAVER_SECTOR_LOOKUPS", 0)
+    sector_map.NAVER_SECTOR_CACHE.clear()
+    monkeypatch.setattr(sector_map, "urlopen", lambda request, timeout: FakeResponse())
+
+    result = sector_map.pick_sector("", "삼성전자", [], "005930")
+
+    assert result["sector"] == "반도체와반도체장비"
+    assert result["sectorSource"] == "naver-upjong"

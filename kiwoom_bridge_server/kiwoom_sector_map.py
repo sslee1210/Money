@@ -1,5 +1,17 @@
+import html
+import os
 import re
+from urllib.request import Request, urlopen
 from typing import Any, Dict, List, Optional, Tuple
+
+
+NAVER_SECTOR_ENABLED = str(os.getenv('ALLOW_NAVER_SECTOR', '0')).strip().lower() in {'1', 'true', 'yes', 'on'}
+NAVER_SECTOR_TIMEOUT_SEC = float(os.getenv('NAVER_SECTOR_TIMEOUT_SEC', '1.5'))
+NAVER_SECTOR_MAX_LOOKUPS = int(os.getenv('NAVER_SECTOR_MAX_LOOKUPS', '120'))
+NAVER_SECTOR_CACHE: Dict[str, Optional[str]] = {}
+NAVER_SECTOR_LOOKUPS = 0
+NAVER_UPJONG_RE = re.compile(r'업종명\s*:\s*<a[^>]*>([^<]+)</a>')
+FALLBACK_SECTOR = '기타'
 
 
 def normalize_kiwoom_text(value: Any) -> str:
@@ -59,6 +71,43 @@ NAME_HINTS: List[Tuple[str, str]] = [
     ('POSCO', '철강·금속'), ('포스코', '철강·금속'), ('LG화학', '화학·소재'), ('한국전력', '에너지·전력'),
     ('두산에너빌리티', '에너지·전력'), ('삼성물산', '건설·기계'), ('농심', '음식료·소비재'), ('SK텔레콤', '통신·보안'),
 ]
+
+
+def naver_sector_stats() -> Dict[str, Any]:
+    return {
+        'enabled': NAVER_SECTOR_ENABLED,
+        'cacheCount': len(NAVER_SECTOR_CACHE),
+        'lookupCount': NAVER_SECTOR_LOOKUPS,
+        'lookupLimit': NAVER_SECTOR_MAX_LOOKUPS,
+        'timeoutSec': NAVER_SECTOR_TIMEOUT_SEC,
+    }
+
+
+def fetch_naver_sector(code: Optional[str]) -> Optional[str]:
+    global NAVER_SECTOR_LOOKUPS
+    clean = re.sub(r'[^0-9]', '', str(code or '')).zfill(6)[-6:]
+    if not NAVER_SECTOR_ENABLED or clean == '000000':
+        return None
+    if clean in NAVER_SECTOR_CACHE:
+        return NAVER_SECTOR_CACHE[clean]
+    if NAVER_SECTOR_LOOKUPS >= NAVER_SECTOR_MAX_LOOKUPS:
+        NAVER_SECTOR_CACHE[clean] = None
+        return None
+
+    NAVER_SECTOR_LOOKUPS += 1
+    url = f'https://finance.naver.com/item/main.naver?code={clean}'
+    try:
+        request = Request(url, headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.naver.com/'})
+        raw = urlopen(request, timeout=NAVER_SECTOR_TIMEOUT_SEC).read()
+        page = raw.decode('utf-8', errors='replace')
+    except Exception:
+        NAVER_SECTOR_CACHE[clean] = None
+        return None
+
+    match = NAVER_UPJONG_RE.search(page)
+    sector = normalize_kiwoom_text(html.unescape(match.group(1))) if match else ''
+    NAVER_SECTOR_CACHE[clean] = sector or None
+    return NAVER_SECTOR_CACHE[clean]
 
 
 def parse_master_info(raw: str) -> Dict[str, str]:
@@ -125,6 +174,10 @@ def sector_from_name_hint(name: str) -> Optional[str]:
 
 def pick_sector(raw_info: str, name: str, themes: Optional[List[str]] = None, code: Optional[str] = None) -> Dict[str, Any]:
     themes = themes or []
+    naver_sector = fetch_naver_sector(code)
+    if naver_sector:
+        return {'sector': naver_sector, 'sectorSource': 'naver-upjong', 'themes': themes}
+
     for sector, source in [
         (sector_from_name_hint(name), 'kiwoom-name-hint'),
         (sector_from_keywords(compact_text(*themes)), 'kiwoom-theme'),
@@ -133,4 +186,4 @@ def pick_sector(raw_info: str, name: str, themes: Optional[List[str]] = None, co
     ]:
         if sector:
             return {'sector': sector, 'sectorSource': source, 'themes': themes}
-    return {'sector': '테마·스몰캡', 'sectorSource': 'broad-fallback-no-etc', 'themes': themes}
+    return {'sector': FALLBACK_SECTOR, 'sectorSource': 'unclassified-fallback', 'themes': themes}

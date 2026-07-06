@@ -21,6 +21,9 @@ set "DASHBOARD_DIR=%~dp0dashboard"
 
 echo [kiwoom] Shared bridge URL: %KIWOOM_BRIDGE_URL%
 echo [mode] One Kiwoom login, one Money bridge, Money analysis + dashboard share the same data bridge.
+if "%MONEY_RESTART_BRIDGE%"=="" (
+    set "MONEY_RESTART_BRIDGE=1"
+)
 
 if not exist ".venv\Scripts\python.exe" (
     echo [setup] Creating Money virtual environment...
@@ -41,6 +44,13 @@ if errorlevel 1 (
         echo [error] Money package installation failed.
         pause
         exit /b 1
+    )
+)
+
+if "%MONEY_RESTART_BRIDGE%"=="1" (
+    for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":8765" ^| findstr "LISTENING"') do (
+        echo [kiwoom] Restarting existing bridge process on port 8765: %%p
+        taskkill /PID %%p /F >nul 2>nul
     )
 )
 

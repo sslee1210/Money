@@ -4,7 +4,7 @@ import os
 
 import kiwoom_bridge as base
 from kiwoom_amount import normalize_trade_amount_million
-from kiwoom_sector_map import parse_code_list, parse_theme_groups, pick_sector
+from kiwoom_sector_map import FALLBACK_SECTOR, naver_sector_stats, parse_code_list, parse_theme_groups, pick_sector
 
 
 TRADE_AMOUNT_UNIT_POLICY = 'kiwoom-only-price-volume-sanity-normalization'
@@ -33,7 +33,7 @@ class KiwoomOnlyController(base.KiwoomController):
         provider = 'Kiwoom OpenAPI+ with Naver fallback' if ALLOW_NAVER_SECTOR else 'Kiwoom OpenAPI+ only'
         priority = ['kiwoom-theme', 'kiwoom-master-info', 'kiwoom-name-hint', 'kiwoom-name-keyword']
         if ALLOW_NAVER_SECTOR:
-            priority.append('naver')
+            priority = ['naver-upjong', *priority]
         payload['sectorMapping'] = {
             'provider': provider,
             'priority': priority,
@@ -41,6 +41,7 @@ class KiwoomOnlyController(base.KiwoomController):
             'themeGroupCount': self.theme_group_count,
             'themeCodeCount': len(self.theme_by_code),
             'lastThemeRefreshAt': self.last_theme_refresh_at,
+            'naver': naver_sector_stats(),
         }
         return payload
 
@@ -54,8 +55,9 @@ class KiwoomOnlyController(base.KiwoomController):
         # Count unclassified stocks including the broad fallback bucket
         stats['unclassifiedCount'] = sum(
             1 for code in self.registered_codes
-            if self.master.get(code, {}).get('sector') in {'미분류', '기타', '테마·스몰캡'}
+            if self.master.get(code, {}).get('sector') in {'미분류', '기타', FALLBACK_SECTOR}
         )
+        stats['naverSector'] = naver_sector_stats()
         stats['tradeAmountUnitPolicy'] = TRADE_AMOUNT_UNIT_POLICY
         # Data boundary description reflecting whether Naver fallback is used
         if ALLOW_NAVER_SECTOR:
