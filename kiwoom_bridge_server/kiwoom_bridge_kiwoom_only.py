@@ -68,12 +68,12 @@ class KiwoomOnlyController(base.KiwoomController):
         if self.theme_loaded:
             return
         try:
-            raw_groups = str(self.ocx.dynamicCall('GetThemeGroupList(int)', 1) or '')
+            raw_groups = base.normalize_kiwoom_text(self.ocx.dynamicCall('GetThemeGroupList(int)', 1))
             groups = parse_theme_groups(raw_groups)
             self.theme_group_count = len(groups)
             theme_by_code: Dict[str, List[str]] = defaultdict(list)
             for theme_id, theme_name in groups:
-                raw_codes = str(self.ocx.dynamicCall('GetThemeGroupCode(QString)', theme_id) or '')
+                raw_codes = base.normalize_kiwoom_text(self.ocx.dynamicCall('GetThemeGroupCode(QString)', theme_id))
                 for code in parse_code_list(raw_codes, base.clean_code):
                     if theme_name and theme_name not in theme_by_code[code]:
                         theme_by_code[code].append(theme_name)
@@ -90,7 +90,7 @@ class KiwoomOnlyController(base.KiwoomController):
             if code in self.master:
                 continue
             name = self._code_name(code)
-            raw_info = str(self.ocx.dynamicCall('GetMasterStockInfo(QString)', code) or '')
+            raw_info = base.normalize_kiwoom_text(self.ocx.dynamicCall('GetMasterStockInfo(QString)', code))
             themes = self.theme_by_code.get(code, [])
             # Pass the code to pick_sector so that Naver fallback can be used if enabled
             sector_info = pick_sector(raw_info, name, themes, code)
@@ -110,7 +110,7 @@ class KiwoomOnlyController(base.KiwoomController):
             if not code or code == '000000':
                 continue
 
-            name = row.get('종목명') or row.get('name') or self._code_name(code)
+            name = base.normalize_kiwoom_text(row.get('종목명') or row.get('name') or self._code_name(code))
             if base.is_excluded_name(name):
                 continue
 
@@ -163,7 +163,7 @@ class KiwoomOnlyController(base.KiwoomController):
 
         row = rows[0]
         master = self.master.get(normalized_code, {})
-        name = row.get('종목명') or master.get('name') or candidate.get('name') or self._code_name(normalized_code)
+        name = base.normalize_kiwoom_text(row.get('종목명') or master.get('name') or candidate.get('name') or self._code_name(normalized_code))
         price = base.to_int(row.get('현재가')) or int(candidate.get('price') or 0)
         volume = base.to_int(row.get('거래량')) or int(candidate.get('volume') or 0)
         trade_amount_million, amount_meta = normalize_trade_amount_million(
@@ -238,7 +238,7 @@ class KiwoomOnlyController(base.KiwoomController):
         self._record_real_event(code, str(real_type), handled=True)
         master = self.master.get(code, {})
         candidate = self.candidates.get(code, {})
-        name = master.get('name') or candidate.get('name') or self._code_name(code)
+        name = base.normalize_kiwoom_text(master.get('name') or candidate.get('name') or self._code_name(code))
 
         raw_price = self.ocx.dynamicCall('GetCommRealData(QString, int)', code, base.FID_PRICE)
         raw_change_rate = self.ocx.dynamicCall('GetCommRealData(QString, int)', code, base.FID_CHANGE_RATE)

@@ -42,6 +42,8 @@ DISPLAY_RANKING_BASELINE = os.getenv('KIWOOM_DISPLAY_RANKING_BASELINE', '1').str
 EXCHANGE_TYPE = os.getenv('KIWOOM_EXCHANGE_TYPE', '3').strip() or '3'
 
 EXCLUDE_NAME_RE = re.compile(r'(ETF|ETN|ELW|스팩|기업인수목적|리츠|KODEX|TIGER|ACE|SOL|RISE|KOSEF|HANARO|KBSTAR|ARIRANG|TIMEFOLIO|히어로즈)', re.I)
+HANGUL_RE = re.compile(r'[가-힣]')
+MOJIBAKE_RE = re.compile(r'[À-ÿ�]')
 
 
 def now_iso() -> str:
@@ -58,6 +60,7 @@ def normalize_kiwoom_text(value: Any) -> str:
         return ''
 
     candidates = [text]
+
     if all(ord(char) <= 255 for char in text):
         raw = bytes(ord(char) for char in text)
         for encoding in ('cp949', 'euc-kr', 'utf-8'):
@@ -68,10 +71,25 @@ def normalize_kiwoom_text(value: Any) -> str:
             if decoded and decoded not in candidates:
                 candidates.append(decoded)
 
+    for source_encoding, target_encoding in (('cp949', 'utf-8'), ('utf-8', 'cp949')):
+        try:
+            decoded = text.encode(source_encoding).decode(target_encoding).strip()
+        except UnicodeError:
+            continue
+        if decoded and decoded not in candidates:
+            candidates.append(decoded)
+
     for candidate in candidates:
-        if re.search(r'[가-힣]', candidate):
+        if HANGUL_RE.search(candidate) and '�' not in candidate:
             return candidate
-    return candidates[0]
+
+    def score(candidate: str) -> int:
+        hangul = len(HANGUL_RE.findall(candidate))
+        bad = len(MOJIBAKE_RE.findall(candidate))
+        replacement = candidate.count('�') + candidate.count('?')
+        return hangul * 10 - bad * 4 - replacement * 8
+
+    return max(candidates, key=score)
 
 
 def is_stock_trade_real_type(value: Any) -> bool:
@@ -990,7 +1008,7 @@ class KiwoomController(QObject):
             if code in self.master:
                 continue
             name = self._code_name(code)
-            raw_info = str(self.ocx.dynamicCall('GetMasterStockInfo(QString)', code) or '')
+            raw_info = normalize_kiwoom_text(self.ocx.dynamicCall('GetMasterStockInfo(QString)', code))
             self.master[code] = {
                 'code': code,
                 'name': name,
@@ -1000,7 +1018,7 @@ class KiwoomController(QObject):
             }
 
     def _code_name(self, code: str) -> str:
-        return str(self.ocx.dynamicCall('GetMasterCodeName(QString)', code) or '').strip()
+        return normalize_kiwoom_text(self.ocx.dynamicCall('GetMasterCodeName(QString)', code))
 
     def _subscribe_realtime(self, codes: List[str]) -> None:
         for screen in self.screens:
@@ -1084,8 +1102,8 @@ class KiwoomController(QObject):
     def _normalize_stock(self, code: str, quote: Dict[str, Any]) -> Dict[str, Any]:
         master = self.master.get(code, {})
         candidate = self.candidates.get(code, {})
-        name = quote.get('name') or master.get('name') or self._code_name(code)
-        sector = master.get('sector') or quote.get('sector') or '미분류'
+        name = normalize_kiwoom_text(quote.get('name') or master.get('name') or self._code_name(code))
+        sector = normalize_kiwoom_text(master.get('sector') or quote.get('sector') or '미분류')
         excluded = bool(master.get('excluded')) or is_excluded_name(name)
         is_realtime = bool(quote.get('isRealtime'))
         is_current_tr = bool(quote.get('isCurrentTr'))
@@ -1150,7 +1168,7 @@ class KiwoomController(QObject):
                 row = {}
                 for field in fields:
                     value = self.ocx.dynamicCall('GetCommData(QString, QString, int, QString)', trcode, rqname, row_index, field)
-                    row[field] = str(value or '').strip()
+                    row[field] = normalize_kiwoom_text(value)
                 if repeat_count > 0 or any(str(value or '').strip() for value in row.values()):
                     rows.append(row)
             self._tr_rows = rows

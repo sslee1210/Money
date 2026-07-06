@@ -1,6 +1,37 @@
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+
+def normalize_kiwoom_text(value: Any) -> str:
+    text = str(value or '').strip()
+    if not text:
+        return ''
+
+    candidates = [text]
+    if all(ord(char) <= 255 for char in text):
+        raw = bytes(ord(char) for char in text)
+        for encoding in ('cp949', 'euc-kr', 'utf-8'):
+            try:
+                decoded = raw.decode(encoding).strip()
+            except UnicodeDecodeError:
+                continue
+            if decoded and decoded not in candidates:
+                candidates.append(decoded)
+
+    for source_encoding, target_encoding in (('cp949', 'utf-8'), ('utf-8', 'cp949')):
+        try:
+            decoded = text.encode(source_encoding).decode(target_encoding).strip()
+        except UnicodeError:
+            continue
+        if decoded and decoded not in candidates:
+            candidates.append(decoded)
+
+    for candidate in candidates:
+        if re.search(r'[가-힣]', candidate) and '�' not in candidate:
+            return candidate
+
+    return max(candidates, key=lambda item: len(re.findall(r'[가-힣]', item)) * 10 - len(re.findall(r'[À-ÿ�]', item)) * 4)
+
 SECTOR_KEYWORD_RULES: List[Tuple[str, List[str]]] = [
     ('반도체', ['반도체', 'HBM', 'DRAM', 'NAND', '낸드', '메모리', '비메모리', '파운드리', '웨이퍼']),
     ('AI·로봇', ['AI', '인공지능', '로봇', '자동화', '머신비전']),
@@ -39,7 +70,7 @@ def parse_master_info(raw: str) -> Dict[str, str]:
         for sep in ['|', ':', '=']:
             if sep in token:
                 key, value = token.split(sep, 1)
-                result[key.strip()] = value.strip()
+                result[normalize_kiwoom_text(key)] = normalize_kiwoom_text(value)
                 break
     return result
 
@@ -56,8 +87,10 @@ def parse_theme_groups(raw_groups: str) -> List[Tuple[str, str]]:
             theme_id, theme_name = item.split('\t', 1)
         else:
             continue
-        if theme_id.strip() and theme_name.strip():
-            groups.append((theme_id.strip(), theme_name.strip()))
+        theme_id = theme_id.strip()
+        theme_name = normalize_kiwoom_text(theme_name)
+        if theme_id and theme_name:
+            groups.append((theme_id, theme_name))
     return groups
 
 
@@ -71,7 +104,7 @@ def parse_code_list(raw_codes: str, clean_code) -> List[str]:
 
 
 def compact_text(*values: Any) -> str:
-    return ' '.join(str(value or '') for value in values if str(value or '').strip())
+    return ' '.join(normalize_kiwoom_text(value) for value in values if str(value or '').strip())
 
 
 def sector_from_keywords(text: str) -> Optional[str]:

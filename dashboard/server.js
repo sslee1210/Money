@@ -25,6 +25,7 @@ const EXCLUDED_PRODUCT_RE = /(ETF|ETN|ELW|스팩|기업인수목적|리츠|KODEX
 
 const samplesByCode = new Map();
 const alertMap = new Map();
+const WINDOWS_949_DECODER = new TextDecoder('windows-949');
 
 const app = express();
 app.use(cors());
@@ -376,12 +377,45 @@ async function bridgeJson(pathname, options = {}, timeoutMs = 5000) {
     const response = await fetch(`${BRIDGE_URL}${pathname}`, { ...options, signal: controller.signal });
     const text = await response.text();
     const payload = text ? JSON.parse(text) : {};
-    return { ok: response.ok && payload.ok !== false, httpStatus: response.status, ...payload };
+    return normalizeBridgePayloadText({ ok: response.ok && payload.ok !== false, httpStatus: response.status, ...payload });
   } catch (error) {
     return { ok: false, error: String(error?.message || error), bridgeUrl: BRIDGE_URL };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function normalizeBridgePayloadText(value) {
+  if (Array.isArray(value)) return value.map((item) => normalizeBridgePayloadText(item));
+  if (value && typeof value === 'object') {
+    const next = {};
+    Object.entries(value).forEach(([key, item]) => {
+      next[key] = normalizeBridgePayloadText(item);
+    });
+    return next;
+  }
+  if (typeof value === 'string') return repairKiwoomText(value);
+  return value;
+}
+
+function repairKiwoomText(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  const candidates = [text];
+  if ([...text].every((char) => char.charCodeAt(0) <= 255)) {
+    const bytes = Uint8Array.from([...text].map((char) => char.charCodeAt(0)));
+    const decoded = WINDOWS_949_DECODER.decode(bytes).trim();
+    if (decoded && !candidates.includes(decoded)) candidates.push(decoded);
+  }
+
+  const score = (candidate) => {
+    const hangul = (candidate.match(/[가-힣]/g) || []).length;
+    const mojibake = (candidate.match(/[À-ÿ�]/g) || []).length;
+    const replacement = (candidate.match(/[�?]/g) || []).length;
+    return hangul * 10 - mojibake * 4 - replacement * 8;
+  };
+  return candidates.sort((a, b) => score(b) - score(a))[0];
 }
 
 async function ensureBridgeStarted() {

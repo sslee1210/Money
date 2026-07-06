@@ -20,6 +20,8 @@ def test_bridge_exposes_realtime_fid_diagnostics():
     assert "lastRealType" in text
     assert "realtimeRegistration" in text
     assert "normalize_kiwoom_text" in text
+    assert "GetMasterCodeName(QString)" in text
+    assert "row[field] = normalize_kiwoom_text(value)" in text
 
 
 def test_bridge_quote_exposes_realtime_time_and_candle_sanity_flag():
@@ -53,9 +55,14 @@ def test_integrated_launcher_uses_money_bridge_for_millionaire():
 
 def test_embedded_dashboard_uses_external_money_bridge_by_default():
     server = (ROOT / "dashboard" / "server.js").read_text(encoding="utf-8")
+    index = (ROOT / "dashboard" / "index.html").read_text(encoding="utf-8")
 
     assert "process.env.KIWOOM_EXTERNAL_BRIDGE_ONLY || '1'" in server
     assert "Start Money bridge first" in server
+    assert "repairKiwoomText" in server
+    assert "new TextDecoder('windows-949')" in server
+    assert "Money Dashboard - Kiwoom Sector Board" in index
+    assert "화면을 불러오는 중입니다" in index
     assert (ROOT / "dashboard" / "package.json").exists()
     assert not (ROOT / "dashboard" / "bridge").exists()
 
@@ -72,10 +79,17 @@ def test_realtime_type_accepts_cp949_bytes_as_latin1_text():
     text = (ROOT / "kiwoom_bridge_server" / "kiwoom_bridge.py").read_text(encoding="utf-8")
     start = text.index("def normalize_kiwoom_text")
     end = text.index("\ndef to_number", start)
-    namespace = {"re": re, "Any": object}
+    namespace = {
+        "re": re,
+        "Any": object,
+        "HANGUL_RE": re.compile(r"[가-힣]"),
+        "MOJIBAKE_RE": re.compile(r"[À-ÿ�]"),
+    }
     exec(text[start:end], namespace)
 
     mojibake_real_type = "주식체결".encode("cp949").decode("latin1")
+    mojibake_stock_name = "삼성전자".encode("cp949").decode("latin1")
 
     assert namespace["normalize_kiwoom_text"](mojibake_real_type) == "주식체결"
+    assert namespace["normalize_kiwoom_text"](mojibake_stock_name) == "삼성전자"
     assert namespace["is_stock_trade_real_type"](mojibake_real_type)

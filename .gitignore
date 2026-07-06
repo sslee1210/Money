@@ -18,6 +18,7 @@ env/
 
 dashboard/node_modules/
 dashboard/dist/
+dashboard/.runlogs/
 dashboard/.env
 dashboard/.env.*
 !dashboard/.env.example

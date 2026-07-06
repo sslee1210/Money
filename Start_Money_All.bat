@@ -100,8 +100,14 @@ if exist "%DASHBOARD_DIR%\package.json" (
         )
         popd
     )
+    for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":5188" ^| findstr "LISTENING"') do (
+        echo [dashboard] Stopping existing dashboard process on port 5188: %%p
+        taskkill /PID %%p /F >nul 2>nul
+    )
     echo [dashboard] Starting dashboard on http://localhost:5188 using the shared Money bridge.
     start "Money Dashboard" cmd /k "cd /d ""%DASHBOARD_DIR%"" && set PORT=5188&& set KIWOOM_BRIDGE_URL=%KIWOOM_BRIDGE_URL%&& set KIWOOM_EXTERNAL_BRIDGE_ONLY=1&& npm run server"
+    echo [dashboard] Opening http://localhost:5188 after startup.
+    start "" cmd /c "timeout /t 5 /nobreak >nul && start http://localhost:5188/?money_dashboard=1"
 ) else (
     echo [dashboard] Folder not found: %DASHBOARD_DIR%
     echo [dashboard] Dashboard launch skipped.
